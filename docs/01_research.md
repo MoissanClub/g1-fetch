@@ -85,6 +85,26 @@ Budget assumption: perception ≤ ~40 ms per frame at 640-px input so a 10 Hz se
 - Matches what teleop did kinematically (same IK, same hand commands), needs no training data, runs in ~15 ms of GPU per frame, and every phase has a measurable success check.
 - Costs: geometry priors (door width, handle offset, hinge side) live in a config and need one afternoon of on-robot tuning; the approach is specific to *a* fridge, not fridges in general.
 
+## 5. Jetson deployment learnings (verified on PC2, 2026-09-26)
+- **JetPack "installed" can mean only the L4T base.** PC2 had L4T 36.4.3 but no CUDA toolkit, cuDNN or TensorRT
+  (`apt-cache policy nvidia-jetpack` → none; `/usr/local/cuda` absent). CPU inference of YOLOE-26s + YOLO26n was 2.5–5 s/frame.
+- **Lean GPU stack** that suffices for TensorRT inference through Ultralytics: `cuda-libraries-12-6` (+`cuda-nvtx`, `cuda-cupti`),
+  `libcudnn9-cuda-12`, `libnvinfer10` + plugin/onnxparsers/dispatch/lean + `python3-libnvinfer`, and `nvidia-l4t-dla-compiler`
+  (without it `import tensorrt` fails with `libnvdla_compiler.so`). ≈1.8 GB instead of the ~6 GB `nvidia-jetpack` metapackage.
+- **torch must come from NVIDIA's Jetson index** (`pypi.jetson-ai-lab.io/jp6/cu126`, torch 2.11.0 / torchvision 0.26.0 for
+  Python 3.10), installed with `--no-deps --index-url` only. With PyPI as an extra index pip picked `torch 2.11.0+cu130`,
+  a CUDA-13 SBSA build that reports "driver too old" on Tegra. conda-forge aarch64 pytorch is likewise CPU/SBSA only.
+- The Jetson torch 2.11 wheel links `libcudss.so.0`; the `nvidia-cudss-cu12==0.8.0.10` PyPI wheel provides it (its CUDA 12.9
+  cuBLAS/NVRTC pip dependencies are removed again to keep the system CUDA 12.6 libraries authoritative).
+- The system TensorRT Python module (`/usr/lib/python3.10/dist-packages`) is reused from the conda env through a `.pth` file;
+  the env's Python is also 3.10, so the binary module loads.
+- Engine builds take ~8 min each on the Orin NX at 15 W. Result: **60–90 ms per frame for both detectors together**
+  (pre/post-processing included) at 15 W with 4 CPU cores online; a 25 W / MAXN mode would roughly halve that.
+- The D435i pip wheel `pyrealsense2==2.58.4` works on JetPack 6.2 without kernel patches (RSUSB backend) once the V4L2
+  owner (`teleimager-realsense-webrtc.service`) is stopped.
+- Floor-plane fit on captured depth gave camera height 1.31 m and 48.7° down-tilt (URDF: 47.6°), confirming the view-ceiling analysis.
+- PC2's LAN address is a DHCP lease on a USB Wi-Fi dongle and changed mid-session; the DDS interface to the mainboard is `enP8p1s0`.
+
 ## 4. Related work consulted
 - Unitree docs (local mirror `g1-docs/`): sport services, arm control, joint order, odometry, depth camera, LiDAR, motion switcher, arm action service.
 - xr_teleoperate (local): `G1_23_ArmController`, `G1_23_ArmIK`, BrainCo controller; teleop-proven parameters (kp 80/40 wrist in debug mode; arm_sdk weight ramp).

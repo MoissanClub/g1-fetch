@@ -344,8 +344,8 @@ class UnitreeArmStreamer(ArmStreamer):
         with self._state_lock:
             if self._q is None:
                 return False
-            if self.mode_machine != 1:
-                log.warning("mode_machine=%s (expected 1 for the 23-DoF G1)", self.mode_machine)
+            if self.mode_machine not in (1, 4):   # 1 = g1_23dof, 4 = g1_23dof_rev_1_0 (Unitree URDF table)
+                log.warning("mode_machine=%s (expected 1 or 4 for a 23-DoF G1)", self.mode_machine)
             self._waist = float(self._q[WAIST_YAW])
             return True
 

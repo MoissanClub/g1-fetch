@@ -1,0 +1,13 @@
+# AMD64 workstation, CPU only (the GPUs there are reserved). On top of a clone of the `uni` conda env
+# (pinocchio 3.1.0 + casadi 3.6.7 from conda-forge, Python 3.10). Install torch first from the CPU index:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0 torchvision==0.29.0
+#   pip install -r requirements-host.txt
+#   pip install -e ../unitree_sdk2_python
+ultralytics==8.4.162
+opencv-python-headless==4.11.0.86
+pytest==9.1.1
+pytest-timeout==2.4.0
+requests==2.34.2
+PyYAML==6.0.3
+paramiko==5.0.0                  # only used to bootstrap the SSH key on PC2
+numpy<2

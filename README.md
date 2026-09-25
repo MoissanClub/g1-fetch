@@ -4,7 +4,8 @@ Autonomous "fetch a drink from the fridge" for a Unitree G1 Edu (23 DoF, BrainCo
 entirely on PC2 (Jetson Orin NX 16 GB): turn until the fridge is seen, walk up and square to the door,
 open it with the right hand, take a can with the left, close the door, walk back, hand the can over.
 
-Status (2026-09-25): research, design, code and host-side tests are done; **nothing has run on the robot yet**.
+Status (2026-09-26): research, design, code, host-side tests and the PC2 environment are done; the robot has only been
+read from, **no motion has been commanded yet**.
 Start with `docs/04_deploy_checklist.md` when the robot is available.
 
 ## Layout
@@ -33,19 +34,22 @@ python -m g1_fetch.cli run --dry-run --sim              # whole task on the mock
 python -m g1_fetch.cli detect data/samples --out /tmp/ann --set detector.device=cpu
 ```
 
-`g1fetch` is a conda env cloned from `uni` (pinocchio 3.1 + casadi) with CPU torch, ultralytics, opencv-headless,
-pyyaml, pytest, scipy and `unitree_sdk2_python` installed editable. Import `pinocchio` before `torch` on this
-machine (libstdc++ ordering); `tests/conftest.py` does that.
+`g1fetch` on the workstation is created by `scripts/host_setup.sh` (clone of `uni` + `requirements-host.txt`, CPU torch).
+Import `pinocchio` before `torch` on this machine (libstdc++ ordering); `tests/conftest.py` does that.
 
 ## On the robot (PC2)
 
 ```bash
-bash scripts/pc2_setup.sh
-python scripts/export_detector.py --engine      # TensorRT FP16 engines
-python -m g1_fetch.cli check                    # SDK, FSM, odometry, hands, camera, detector latency
-python -m g1_fetch.cli capture data/captures/fridge_1m -n 10
-python -m g1_fetch.cli run --step --until approach     # then open_door, fetch_can, close_door, full
+bash scripts/pc2_setup.sh                       # lean CUDA/TensorRT apt set, g1fetch env, Jetson torch, engines (see the script header)
+conda activate g1fetch
+sudo systemctl stop teleimager-realsense-webrtc # the teleop stream owns the camera; start it again when done
+python -m g1_fetch.cli check   --config configs/pc2.yaml   # SDK, FSM, odometry, hands, camera, detector latency (read-only)
+python -m g1_fetch.cli capture data/captures/fridge_1m -n 10 --config configs/pc2.yaml
+python -m g1_fetch.cli run --step --until approach --config configs/pc2.yaml   # then open_door, fetch_can, close_door, full
 ```
+
+PC2's LAN address is a DHCP lease on its USB Wi-Fi dongle (MAC `94:ba:06:f8:16:0d`); find it with
+`ip neigh | grep 94:ba:06:f8:16:0d` after a ping sweep. The DDS interface to the mainboard is `enP8p1s0`.
 
 The robot must be in the main controller (FSM 500, "ai" mode) with the operator holding the remote.
 `--step` waits for Enter before each motion. Logs land in `data/runs/<timestamp>/`.

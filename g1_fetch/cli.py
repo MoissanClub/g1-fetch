@@ -90,7 +90,7 @@ def cmd_check(args):
     from .control.hand import UnitreeBraincoHand
 
     for side in ("left", "right"):
-        h = UnitreeBraincoHand(cfg, side)
+        h = UnitreeBraincoHand(cfg, side, publish=False)   # read-only: no finger commands during check
         time.sleep(0.5)
         print(side, "state", None if h.state() is None else np.round(h.state(), 2))
         h.close()

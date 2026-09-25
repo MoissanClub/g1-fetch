@@ -3,6 +3,26 @@
 Work through the sections in order. Every "MEASURE" item feeds a value in `configs/default.yaml`
 (or a robot-specific override file passed with `--config`). Nothing moves the robot until section 5.
 
+## PC2 facts verified 2026-09-26 (see also configs/pc2.yaml)
+- Host `unitree-g1-nx`, JetPack 6.2 (L4T 36.4.3), 15 W power mode with 4 CPU cores online at the time of the check.
+- DDS interface to the mainboard is **`enP8p1s0`** (192.168.123.164), not `eth0` → always pass `--config configs/pc2.yaml`.
+- Project at `~/g1-fetch`; conda env `g1fetch` (offline clone of `uni` + ultralytics, torchvision, pyrealsense2 2.58, pytest).
+- Odometry arrives on `rt/odommodestate` (~50 Hz); `rt/lf/odommodestate` is absent → `loco.odom_topic` defaults to the former.
+- `mode_machine` = 4 (`g1_23dof_rev_1_0`). Robot was idling in **FSM 801 (running mode)**; arm_sdk needs Regular mode
+  (R3 remote: R1 + X → FSM 500). `loco.required_fsm_ids` enforces this at start.
+- Camera: pyrealsense2 works once `teleimager-realsense-webrtc.service` is stopped (restart it afterwards). Floor-plane fit
+  on captured depth: camera height **1.31 m**, optical axis **48.7° below horizontal** (URDF: 47.6°) → `robot.camera_height_m`,
+  `camera.torso_T_link` updated.
+- No CUDA/cuDNN/TensorRT were installed originally (only L4T driver packages); CPU inference of YOLOE-26s + YOLO26n took
+  2.5–5 s per frame. Installed (lean, user-approved): `cuda-libraries-12-6` (+nvtx, cupti), `libcudnn9-cuda-12`, TensorRT 10.3
+  runtime + `python3-libnvinfer`, `nvidia-l4t-dla-compiler`; in `g1fetch`: torch 2.11 / torchvision 0.26 from
+  `pypi.jetson-ai-lab.io/jp6/cu126` (install with `--no-deps --index-url` only, PyPI's 2.11 is a CUDA-13 SBSA build),
+  `nvidia-cudss-cu12` for `libcudss.so.0`, `onnx`, `onnxslim`; CUDA paths in `$CONDA_PREFIX/etc/conda/activate.d/cuda.sh`;
+  the system `tensorrt` module reached through a `.pth` file.
+- TensorRT FP16 engines built on PC2 (`models/yoloe-26s-seg-fridge.engine`, `models/yolo26n.engine`, ~8 min each).
+  Benchmark at 15 W / 4 cores: **60–90 ms per frame for both detectors together** (pre/post-processing included, first call
+  ~3.6 s warm-up). Enough for the 10 Hz loop; a 25 W / MAXN power mode would roughly halve it (user decision).
+
 ## 0. Before touching the robot
 - [ ] Copy `g1-fridge-fetch/` and `xr_teleoperate/assets/g1/` (URDF only) to PC2, e.g. `~/junda/`.
 - [ ] Read `docs/01_research.md §1.2` (camera looks 47.6° down) and `docs/02_decisions.md`.

@@ -1,0 +1,13 @@
+# PC2 (Jetson Orin NX, JetPack 6.2 / L4T 36.4.3, Python 3.10) — pip packages on top of the `uni` conda env clone.
+# torch/torchvision are NOT here: they come from NVIDIA's Jetson index (see scripts/pc2_setup.sh), installed with --no-deps.
+# Versions verified working on 2026-09-26.
+ultralytics==8.4.163
+pyrealsense2==2.58.4.10922
+onnx==1.23.0
+onnxslim==0.1.96
+nvidia-cudss-cu12==0.8.0.10      # provides libcudss.so.0 that the Jetson torch 2.11 build links against
+pytest==9.1.1
+pytest-timeout==2.4.0
+requests==2.34.2
+PyYAML==6.0.3
+numpy<2                          # 1.26.4 from conda-forge in `uni`; pip must not upgrade it (pinocchio ABI)

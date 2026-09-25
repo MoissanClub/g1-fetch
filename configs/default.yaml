@@ -5,7 +5,7 @@ network_interface: eth0
 
 robot:
   urdf: ../xr_teleoperate/assets/g1/g1_body23.urdf   # relative to the project root
-  camera_height_m: 1.18            # MEASURE: D435i lens height above floor in the default stance
+  camera_height_m: 1.31            # measured 2026-09-26 from the floor plane in captured depth (standing stance)
   ee_offset_x: 0.15                # MEASURE: palm centre ahead of the wrist-roll joint origin
   # wrist-roll angle at which the palm faces the body midline, per hand (MEASURE by jogging)
   palm_inward_wrist_roll: {left: 0.0, right: 0.0}
@@ -17,7 +17,7 @@ camera:
   depth_min: 0.15
   depth_max: 4.0
   # d435_link in torso_link (URDF g1_body23) and torso_link in pelvis
-  torso_T_link: {xyz: [0.0576235, 0.01753, 0.41987], rpy: [0.0, 0.8307767239493009, 0.0]}
+  torso_T_link: {xyz: [0.0576235, 0.01753, 0.41987], rpy: [0.0, 0.850, 0.0]}   # URDF says 0.8308 (47.6 deg); floor-plane fit on PC2 gave 48.7 deg
   pelvis_T_torso: {xyz: [-0.0039635, 0.0, 0.054], rpy: [0.0, 0.0, 0.0]}
 
 detector:
@@ -43,6 +43,7 @@ verifier:
   timeout_s: 8.0
 
 loco:
+  odom_topic: rt/odommodestate      # PC2 publishes this at ~50 Hz; rt/lf/odommodestate was absent on this robot
   rate_hz: 10
   cmd_duration_s: 0.3               # velocity command expiry; the robot stops if we die
   max_vx: 0.30

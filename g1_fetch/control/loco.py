@@ -144,7 +144,8 @@ class UnitreeLoco(LocoBase):
         self._pose = Pose2D(0.0, 0.0, 0.0)
         self._pose_t = 0.0
         self._lock = threading.Lock()
-        self._sub = ChannelSubscriber("rt/lf/odommodestate", SportModeState_)
+        topic = str(cfg.loco.get("odom_topic", "rt/odommodestate"))
+        self._sub = ChannelSubscriber(topic, SportModeState_)
         self._sub.Init(self._on_odom, 10)
         self._required = set(int(v) for v in cfg.loco.required_fsm_ids)
 
@@ -157,7 +158,7 @@ class UnitreeLoco(LocoBase):
         t0 = time.time()
         while self._pose_t == 0.0:
             if time.time() - t0 > 5.0:
-                raise LocoError("no odometry on rt/lf/odommodestate (State Estimator >= 1.0.0.1 required)")
+                raise LocoError("no odometry received (State Estimator service >= 1.0.0.1 required; topic loco.odom_topic)")
             time.sleep(0.05)
         code, fsm = self.client.GetFsmId()
         if code != 0:

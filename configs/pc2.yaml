@@ -1,0 +1,8 @@
+# PC2 (unitree-g1-nx) overrides. Use: python -m g1_fetch.cli <cmd> --config configs/pc2.yaml
+network_interface: enP8p1s0     # DDS to the mainboard (192.168.123.164/24)
+robot:
+  urdf: ../xr_teleoperate/assets/g1/g1_body23.urdf   # ~/xr_teleoperate on PC2
+detector:
+  device: 0                     # Orin GPU (CUDA 12.6 runtime + TensorRT 10.3 installed 2026-09-26)
+  yoloe_model: models/yoloe-26s-seg-fridge.engine   # built by scripts/export_detector.py --engine
+  coco_model: models/yolo26n.engine

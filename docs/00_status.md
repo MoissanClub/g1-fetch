@@ -16,6 +16,17 @@
   - detector pipeline smoke test on COCO images (fridge + person detected; ~50 ms/img on CPU).
 - Detector checkpoints prepared in `models/` (prompts baked; TensorRT export runs on PC2).
 
+## Session 2 (2026-09-26): PC2 bring-up, no robot motion
+- PC2 environment reproducible via `scripts/pc2_setup.sh` + `requirements-pc2.txt` (lean CUDA/TensorRT apt set, `g1fetch`
+  env cloned offline from `uni`, Jetson-index torch 2.11 with CUDA, TensorRT engines). `configs/pc2.yaml` carries the
+  PC2-specific values (DDS interface `enP8p1s0`, GPU engines).
+- Verified on PC2: unit + end-to-end dry-run tests pass; read-only robot check (DDS, odometry on `rt/odommodestate`,
+  `mode_machine` 4, hands); camera capture through pyrealsense2; floor-plane calibration (camera 1.31 m, 48.7° down);
+  detector benchmark 60–90 ms/frame on the GPU.
+- Robot was left untouched (user put it in zero torque). Before arm tests it must be in Regular mode (R1 + X, FSM 500).
+- Code fixes from the bring-up: odometry topic, `mode_machine` 4 accepted, read-only hand objects for `cli check`,
+  measured camera geometry in the default config.
+
 ## Not done / not possible here
 - Nothing has touched the robot. All motion parameters are geometric estimates.
 - No training of any kind (user constraint on the workstation GPUs; no demonstrations exist anyway).

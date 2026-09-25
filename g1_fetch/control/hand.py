@@ -56,7 +56,8 @@ class HandBase:
 
 
 class UnitreeBraincoHand(HandBase):
-    def __init__(self, cfg, side: str):
+    def __init__(self, cfg, side: str, publish: bool = True):
+        """publish=False only subscribes to the state topic (used by `cli check`); no commands are sent."""
         super().__init__(cfg, side)
         from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber
         from unitree_sdk2py.idl.default import unitree_go_msg_dds__MotorCmd_
@@ -74,14 +75,18 @@ class UnitreeBraincoHand(HandBase):
         self._state = None
         self._lock = threading.Lock()
         self._stop = False
+        self.publish = publish
         self._thread = threading.Thread(target=self._loop, daemon=True, name=f"hand-{side}")
-        self._thread.start()
+        if publish:
+            self._thread.start()
 
     def _on_state(self, msg):
         with self._lock:
             self._state = np.array([msg.states[i].q for i in range(N_FINGERS)], dtype=float)
 
     def _publish(self):
+        if not self.publish:
+            return
         for i, c in enumerate(self.msg.cmds):
             c.q = float(self.target[i])
         self.pub.Write(self.msg)
