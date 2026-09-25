@@ -57,7 +57,8 @@ echo "== 3. pip packages =="
 pip install -r "$ROOT/requirements-pc2.txt"
 # Jetson CUDA builds only from the Jetson index, no PyPI fallback, no dependency resolution (deps already present).
 pip install --no-deps --index-url "$JETSON_INDEX" "torch==$TORCH_VER" "torchvision==$TORCHVISION_VER"
-# The cuDSS wheel drags in CUDA 12.9 pip libraries we do not want next to the system CUDA 12.6.
+# libcudss.so.0 for the Jetson torch build; --no-deps keeps its CUDA 12.9 pip libraries away from the system CUDA 12.6.
+pip install --no-deps "nvidia-cudss-cu12==0.8.0.10"
 pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-nvrtc-cu12 cuda-toolkit 2>/dev/null || true
 
 echo "== 4. environment hooks =="
