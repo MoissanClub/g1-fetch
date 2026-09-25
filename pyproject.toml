@@ -1,0 +1,25 @@
+[project]
+name = "g1-fridge-fetch"
+version = "0.1.0"
+description = "Autonomous fridge fetch for a Unitree G1 (23 DoF, BrainCo hands) on a Jetson Orin NX"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pyyaml",
+  "scipy",
+  "opencv-python-headless",
+  "ultralytics",
+  "requests",
+]
+
+[project.optional-dependencies]
+robot = ["unitree_sdk2py", "pyrealsense2"]
+dev = ["pytest", "pytest-timeout"]
+# pinocchio (with CasADi bindings) and casadi come from conda-forge: conda install -c conda-forge "pinocchio>=3" casadi
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300
+
+[tool.setuptools.packages.find]
+include = ["g1_fetch*"]

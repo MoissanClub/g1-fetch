@@ -1,0 +1,145 @@
+# All tunables for the fridge-fetch task. Units: metres, radians, seconds unless stated.
+# Values marked "MEASURE" must be checked on the robot (docs/04_deploy_checklist.md).
+
+network_interface: eth0
+
+robot:
+  urdf: ../xr_teleoperate/assets/g1/g1_body23.urdf   # relative to the project root
+  camera_height_m: 1.18            # MEASURE: D435i lens height above floor in the default stance
+  ee_offset_x: 0.15                # MEASURE: palm centre ahead of the wrist-roll joint origin
+  # wrist-roll angle at which the palm faces the body midline, per hand (MEASURE by jogging)
+  palm_inward_wrist_roll: {left: 0.0, right: 0.0}
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+  depth_min: 0.15
+  depth_max: 4.0
+  # d435_link in torso_link (URDF g1_body23) and torso_link in pelvis
+  torso_T_link: {xyz: [0.0576235, 0.01753, 0.41987], rpy: [0.0, 0.8307767239493009, 0.0]}
+  pelvis_T_torso: {xyz: [-0.0039635, 0.0, 0.054], rpy: [0.0, 0.0, 0.0]}
+
+detector:
+  backend: yoloe                    # yoloe | coco | stub
+  yoloe_model: models/yoloe-26s-seg-fridge.pt     # .engine after TensorRT export on PC2
+  coco_model: models/yolo26n.pt                   # optional cross-check, "" to disable
+  classes: [refrigerator, refrigerator door handle, soda can, person]
+  # canonical labels used by the skills
+  label_map:
+    refrigerator: fridge
+    refrigerator door handle: handle
+    soda can: can
+    person: person
+  conf: 0.25
+  imgsz: 640
+  device: 0                         # CUDA device on PC2, "cpu" on the workstation
+  stable_frames: 3                  # detections must persist this many consecutive frames
+
+verifier:
+  enabled: false
+  url: http://127.0.0.1:8000/v1
+  model: Qwen/Qwen3-VL-2B-Instruct
+  timeout_s: 8.0
+
+loco:
+  rate_hz: 10
+  cmd_duration_s: 0.3               # velocity command expiry; the robot stops if we die
+  max_vx: 0.30
+  max_vy: 0.20
+  max_yaw: 0.40
+  deadband_v: 0.03
+  deadband_w: 0.05
+  required_fsm_ids: [500, 501]
+  search:
+    step_rad: 0.45                  # rotate this much, stop, look
+    yaw_rate: 0.30
+    settle_s: 0.8
+    max_turns: 2                    # full rotations before giving up
+    explore_step_m: 1.0             # walk forward this much and search again (0 = disabled)
+  approach:
+    standoff_m: 0.38                # pelvis-to-door-plane distance at the manipulation pose (MEASURE)
+    # NOTE: arm reach is ~0.44 m from the shoulder (0.10 m lateral of the pelvis), so the handle must be
+    # within ~0.40 m ahead of the pelvis; 0.38 puts the toes roughly 0.15-0.20 m from the door.
+    slow_zone_m: 1.2
+    k_yaw: 1.2
+    k_x: 0.6
+    k_y: 0.8
+    tol_yaw: 0.05
+    tol_dist: 0.03
+    tol_lat: 0.03
+    lateral_offset_m: 0.15          # pelvis y offset from the handle so the door hand reaches comfortably
+    timeout_s: 60
+  return:
+    tol_pos: 0.15
+    tol_yaw: 0.10
+    k_pos: 0.8
+    k_yaw: 1.5
+    timeout_s: 60
+  person_standoff_m: 0.8
+
+arm:
+  rate_hz: 100
+  kp: 60.0
+  kd: 1.5
+  kp_wrist: 40.0
+  kd_wrist: 1.5
+  kp_compliant: 25.0                # during the door pull
+  weight_ramp_s: 2.0
+  max_joint_vel: 1.2                # rad/s, per-step clipping in the streamer
+  cart_speed: 0.12                  # m/s for Cartesian moves
+  cart_step_s: 0.02
+  ik_max_pos_err: 0.02              # reject IK solutions worse than this
+  ik_dir_weight: 0.5                # forearm-direction weight vs position (100); direction is a soft preference
+  home_q: {left: [0.0, 0.25, 0.0, 1.0, 0.0], right: [0.0, -0.25, 0.0, 1.0, 0.0]}   # arms tucked, elbows bent (MEASURE)
+  carry_q: {left: [-0.2, 0.3, 0.0, 1.5, 0.0]}                                       # can held near the chest
+
+hand:
+  rate_hz: 20
+  open: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  grasp: [0.9, 0.7, 0.9, 0.9, 0.9, 0.9]
+  hook: [0.2, 0.0, 0.9, 0.9, 0.9, 0.9]     # fingers curled, thumb aside, for a bar handle
+  close_time_s: 0.8
+
+fridge:
+  hinge_side: left                  # as seen by the robot facing the door
+  door_width_m: 0.60                # prior; overridden by the measured plane extent when visible
+  handle_inset_m: 0.05              # free edge -> handle bar centre
+  handle_protrusion_m: 0.04         # bar centre ahead of the door plane
+  handle_grasp_height_m: 0.85       # above floor; clamped to the reachable band. Shoulder height (~1.0 m)
+                                    # needs awkward postures with a 5-DoF arm; 0.8-0.9 m keeps the forearm forward.
+  handle_height_band: [0.75, 0.95]  # reachable band for the hook grasp (MEASURE)
+  can_shelf_height_m: 0.95          # prior when the can is not seen
+  can_diameter_m: 0.066
+  pregrasp_offset_m: 0.10
+  # stage A: hook the handle and walk backward; the door follows the hand
+  pull_back_m: 0.45                 # odometry distance to retreat while holding the handle
+  pull_back_speed: 0.08             # m/s
+  pull_angle_deg: 60                # stop retreating once the door reaches this angle
+  pull_max_tracking_err: 0.6        # rad; larger arm error means the hand lost the handle or is stuck
+  # stage B: hook the free edge from behind and walk backward again to open wider (optional)
+  stage_b_sweep: true
+  open_angle_deg: 95                # stop retreating once the door reaches this angle
+  edge_standoff_m: 0.30             # pelvis to the free edge when hooking/pushing it (MEASURE)
+  min_open_deg: 70                  # do not step into the cavity front unless the door is at least this open
+  cavity_depth_jump_m: 0.30         # door considered open when the box median depth grows by this
+  # reaching in
+  reach_standoff_m: 0.30            # pelvis to the closed-door plane when reaching for the can (MEASURE; can at 0.42 m is the reach limit)
+  reach_lateral_m: 0.0              # pelvis offset (+left) from the cavity centre
+  can_depth_in_cavity_m: 0.12       # prior: can axis this far behind the door plane
+  retract_m: 0.20                   # pull the can straight out by this much before tucking
+  # closing
+  close_standoff_m: 0.90            # step back here (out of the swing) before hooking the free edge
+  close_lateral_m: -0.15            # +left; negative keeps the body on the free-edge side
+  handover_height_m: 1.00
+
+task:
+  disable_arm_service: true         # switch Unitree's g1_arm_example off before using rt/arm_sdk
+  door_hand: right
+  can_hand: left
+  step_mode: false                  # wait for Enter between phases
+  max_retries: 1
+  log_dir: data/runs
+  handover_timeout_s: 20
+  pull_trigger_err_rad: 0.08        # joint tracking error that means "the user is pulling"
+  pull_trigger_hold_s: 0.3

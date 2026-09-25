@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+data/runs/
+data/captures/
+data/samples/annotated/
+models/*.pt
+models/*.ts
+models/*.engine
+models/*.onnx
+*.pkl
