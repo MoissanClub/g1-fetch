@@ -15,8 +15,8 @@ def test_optical_to_pelvis_points_down(cfg_default):
     p = fr.optical_to_pelvis([0.0, 0.0, 1.0])            # 1 m along the optical axis
     assert p[0] > 0.6 and p[2] < fr.camera_in_pelvis[2] - 0.6   # forward and well below the camera
     assert abs(fr.pelvis_height_m - (cfg_default.robot.camera_height_m - fr.camera_in_pelvis[2])) < 1e-9
-    # view ceiling: nothing above ~1 m is visible in RGB beyond 0.4 m
-    assert fr.view_ceiling(0.4) < 1.0 and fr.view_ceiling(2.4) < 0.05
+    # view ceiling: nothing above the shoulder (~1.13 m) is visible in RGB beyond 0.4 m; only floor beyond ~2.7 m
+    assert fr.view_ceiling(0.4) < 1.13 and fr.view_ceiling(2.7) < 0.05
 
 
 def test_intrinsics_roundtrip():
@@ -94,12 +94,12 @@ def test_handle_prior_and_door_model(cfg_default):
     fr = Frames(cfg_default)
     f = _plane_frame(fr, x_plane=0.9)
     plane = door_plane(f, (0, 0, 639, 479), fr)
-    # a 0.6 m door whose free edge is the right edge of a wide plane -> handle inset from the right edge
+    # a 0.6 m door: the handle sits inset from the free edge (opposite the configured hinge side)
     p = handle_from_prior(plane, cfg_default, fr)
     assert abs(fr.floor_height(p) - cfg_default.fridge.handle_grasp_height_m) < 1e-6
     assert abs(p[0] - (0.9 - cfg_default.fridge.handle_protrusion_m)) < 0.02
     door = door_from_plane(plane, Pose2D(0, 0, 0), p, cfg_default)
-    assert door.hinge_side == "left"
+    assert door.hinge_side == cfg_default.fridge.hinge_side
     assert abs(door.handle_w(0.0)[0] - p[0]) < 1e-6 and abs(door.handle_w(0.0)[1] - p[1]) < 1e-6
     # opening toward the robot moves the free edge to negative x
     assert door.edge_w(math.pi / 2)[0] < door.hinge_w[0] - 0.5

@@ -31,7 +31,7 @@ detector:
     refrigerator door handle: handle
     soda can: can
     person: person
-  conf: 0.25
+  conf: 0.15                        # detector threshold; phases apply their own minimum (approach.min_conf)
   imgsz: 640
   device: 0                         # CUDA device on PC2, "cpu" on the workstation
   stable_frames: 3                  # detections must persist this many consecutive frames
@@ -45,21 +45,23 @@ verifier:
 loco:
   odom_topic: rt/odommodestate      # PC2 publishes this at ~50 Hz; rt/lf/odommodestate was absent on this robot
   rate_hz: 10
-  cmd_duration_s: 0.3               # velocity command expiry; the robot stops if we die
+  cmd_duration_s: 0.5               # velocity command expiry; the robot stops if we die
   max_vx: 0.30
   max_vy: 0.20
-  max_yaw: 0.40
-  deadband_v: 0.03
-  deadband_w: 0.05
+  max_yaw: 0.60
+  deadband_v: 0.08                  # the built-in controller ignores smaller speeds (robot stayed put at 0.05 m/s)
+  deadband_w: 0.08
   required_fsm_ids: [500, 501]
   search:
-    step_rad: 0.45                  # rotate this much, stop, look
-    yaw_rate: 0.30
-    settle_s: 0.8
+    yaw_rate: 0.40                  # continuous rotation; the detector runs on every frame
+    conf: 0.15                      # fridge is a thin strip at the top of the image beyond ~1.5 m (down-tilted camera)
+    confirm_frames: 2               # stationary confirmation looks after a candidate
+    settle_s: 0.5
     max_turns: 2                    # full rotations before giving up
-    explore_step_m: 1.0             # walk forward this much and search again (0 = disabled)
+    explore_step_m: 0               # walk forward this much and search again (0 = disabled; blind walk, keep off indoors)
+    step_rad: 0.60                  # (legacy stop-and-look step, unused by the continuous search)
   approach:
-    standoff_m: 0.38                # pelvis-to-door-plane distance at the manipulation pose (MEASURE)
+    standoff_m: 0.45                # pelvis-to-door-plane distance at the manipulation pose (MEASURE)
     # NOTE: arm reach is ~0.44 m from the shoulder (0.10 m lateral of the pelvis), so the handle must be
     # within ~0.40 m ahead of the pelvis; 0.38 puts the toes roughly 0.15-0.20 m from the door.
     slow_zone_m: 1.2
@@ -67,9 +69,11 @@ loco:
     k_x: 0.6
     k_y: 0.8
     tol_yaw: 0.05
-    tol_dist: 0.03
-    tol_lat: 0.03
-    lateral_offset_m: 0.15          # pelvis y offset from the handle so the door hand reaches comfortably
+    tol_dist: 0.04
+    tol_lat: 0.04
+    lateral_offset_m: 0.0           # pelvis y offset from the handle (0 = handle centred in front; teleop stance per user)
+    handle_min_conf: 0.2            # use a visible handle detection for the lateral servo at close range
+    min_conf: 0.25                  # fridge detections below this are ignored during the approach
     timeout_s: 60
   return:
     tol_pos: 0.15
@@ -80,7 +84,7 @@ loco:
   person_standoff_m: 0.8
 
 arm:
-  rate_hz: 100
+  rate_hz: 50                       # Unitree's arm_sdk example streams at 50 Hz; 100 Hz starved the Orin's GIL
   kp: 60.0
   kd: 1.5
   kp_wrist: 40.0
@@ -96,21 +100,21 @@ arm:
   carry_q: {left: [-0.2, 0.3, 0.0, 1.5, 0.0]}                                       # can held near the chest
 
 hand:
-  rate_hz: 20
+  rate_hz: 10
   open: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   grasp: [0.9, 0.7, 0.9, 0.9, 0.9, 0.9]
   hook: [0.2, 0.0, 0.9, 0.9, 0.9, 0.9]     # fingers curled, thumb aside, for a bar handle
   close_time_s: 0.8
 
 fridge:
-  hinge_side: left                  # as seen by the robot facing the door
+  hinge_side: right                 # as seen by the robot facing the door (user: handle on the LEFT edge, door swings to the robot's right)
   door_width_m: 0.60                # prior; overridden by the measured plane extent when visible
   handle_inset_m: 0.05              # free edge -> handle bar centre
   handle_protrusion_m: 0.04         # bar centre ahead of the door plane
-  handle_grasp_height_m: 0.85       # above floor; clamped to the reachable band. Shoulder height (~1.0 m)
-                                    # needs awkward postures with a 5-DoF arm; 0.8-0.9 m keeps the forearm forward.
-  handle_height_band: [0.75, 0.95]  # reachable band for the hook grasp (MEASURE)
-  can_shelf_height_m: 0.95          # prior when the can is not seen
+  handle_grasp_height_m: 0.95       # above floor; clamped to the reachable band. Shoulder is ~1.13 m above the floor
+                                    # (measured stance); 0.2-0.3 m below the shoulder keeps the forearm forward.
+  handle_height_band: [0.85, 1.05]  # reachable band for the hook grasp (MEASURE)
+  can_shelf_height_m: 1.00          # prior when the can is not seen (shoulder ~1.13 m)
   can_diameter_m: 0.066
   pregrasp_offset_m: 0.10
   # stage A: hook the handle and walk backward; the door follows the hand
@@ -127,7 +131,7 @@ fridge:
   # reaching in
   reach_standoff_m: 0.30            # pelvis to the closed-door plane when reaching for the can (MEASURE; can at 0.42 m is the reach limit)
   reach_lateral_m: 0.0              # pelvis offset (+left) from the cavity centre
-  can_depth_in_cavity_m: 0.12       # prior: can axis this far behind the door plane
+  can_depth_in_cavity_m: 0.10       # prior: can axis this far behind the door plane
   retract_m: 0.20                   # pull the can straight out by this much before tucking
   # closing
   close_standoff_m: 0.90            # step back here (out of the swing) before hooking the free edge

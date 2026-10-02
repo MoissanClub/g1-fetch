@@ -46,6 +46,7 @@ def test_search_and_approach_only(cfg):
     assert ok, task.state.history
     assert abs(appr.plane.distance_x - cfg.loco.approach.standoff_m) < 0.05
     assert abs(appr.plane.yaw_error) < 0.08
-    # the handle prior is on the right of the pelvis at the configured lateral offset
-    assert abs(appr.handle_prior[1] + cfg.loco.approach.lateral_offset_m) < 0.06
+    # the handle prior sits at the configured lateral target (door hand right -> handle at -lateral_offset)
+    target = -cfg.loco.approach.lateral_offset_m if cfg.task.door_hand == "right" else cfg.loco.approach.lateral_offset_m
+    assert abs(appr.handle_prior[1] - target) < 0.06
     assert np.linalg.norm(appr.handle_prior[:2] - scene.door.handle_pelvis(rb.loco.pose())[:2]) < 0.08

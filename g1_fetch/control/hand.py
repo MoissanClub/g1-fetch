@@ -72,8 +72,7 @@ class UnitreeBraincoHand(HandBase):
         for c in self.msg.cmds:
             c.q = 0.0
             c.dq = 1.0
-        self._state = None
-        self._lock = threading.Lock()
+        self._state_msg = None
         self._stop = False
         self.publish = publish
         self._thread = threading.Thread(target=self._loop, daemon=True, name=f"hand-{side}")
@@ -81,8 +80,7 @@ class UnitreeBraincoHand(HandBase):
             self._thread.start()
 
     def _on_state(self, msg):
-        with self._lock:
-            self._state = np.array([msg.states[i].q for i in range(N_FINGERS)], dtype=float)
+        self._state_msg = msg        # parsed lazily in state()
 
     def _publish(self):
         if not self.publish:
@@ -98,8 +96,8 @@ class UnitreeBraincoHand(HandBase):
             time.sleep(period)
 
     def state(self):
-        with self._lock:
-            return None if self._state is None else self._state.copy()
+        m = self._state_msg
+        return None if m is None else np.array([m.states[i].q for i in range(N_FINGERS)], dtype=float)
 
     def close(self):
         self._stop = True

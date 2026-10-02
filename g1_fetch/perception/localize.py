@@ -1,6 +1,7 @@
 """From detections + depth to 3D targets in the pelvis frame."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -75,8 +76,11 @@ def box_to_point(frame: Frame, det: Detection, frames: Frames, shrink: float = 0
     return frames.optical_to_pelvis(p_opt)
 
 
-def box_cloud(frame: Frame, box, frames: Frames, step: int = 4, shrink: float = 0.0) -> np.ndarray:
-    """Pelvis-frame points for valid depth pixels inside a box."""
+def box_cloud(frame: Frame, box, frames: Frames, step: int = 4, shrink: float = 0.0, max_points: int = 2500) -> np.ndarray:
+    """Pelvis-frame points for valid depth pixels inside a box (step grows so that at most ~max_points are used)."""
+    x1, y1, x2, y2 = box
+    area = max(1.0, (x2 - x1) * (y2 - y1))
+    step = max(step, int(math.ceil(math.sqrt(area / max_points))))
     uu, vv = box_pixels(box, shrink, step)
     uu = np.clip(uu, 0, frame.depth.shape[1] - 1)
     vv = np.clip(vv, 0, frame.depth.shape[0] - 1)
@@ -88,7 +92,7 @@ def box_cloud(frame: Frame, box, frames: Frames, step: int = 4, shrink: float = 
     return frames.optical_to_pelvis(p_opt)
 
 
-def fit_plane_ransac(points: np.ndarray, thresh: float = 0.015, iters: int = 200, rng=None) -> tuple[np.ndarray, float, np.ndarray] | None:
+def fit_plane_ransac(points: np.ndarray, thresh: float = 0.015, iters: int = 60, rng=None) -> tuple[np.ndarray, float, np.ndarray] | None:
     """RANSAC plane fit -> (n, d, inlier_mask) with n unit and n . p = d."""
     if points.shape[0] < 30:
         return None
@@ -128,7 +132,7 @@ def door_plane(frame: Frame, box, frames: Frames, min_height: float = 0.05) -> P
     Points below `min_height` above the floor are dropped (floor), the plane is fitted by RANSAC,
     and rejected unless it is near-vertical and facing the robot.
     """
-    pts = box_cloud(frame, box, frames, step=3)
+    pts = box_cloud(frame, box, frames, step=3, max_points=2000)
     if pts.shape[0] == 0:
         return None
     pts = pts[pts[:, 2] + frames.pelvis_height_m > min_height]

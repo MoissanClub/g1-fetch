@@ -149,7 +149,28 @@ class Stabilizer:
         self.history.clear()
 
 
-def build_detector(cfg):
+def build_detector(cfg, warmup: bool = True):
+    """Build the configured detector and warm it up. The first TensorRT run after a PC2 reboot has failed once
+    with a CUDA stream-capture error; a warm-up with one rebuild-and-retry absorbs that before the task starts."""
+    det = _build_detector(cfg)
+    if warmup and cfg.detector.backend != "stub":
+        blank = np.zeros((int(cfg.camera.height), int(cfg.camera.width), 3), np.uint8)
+        for attempt in range(2):
+            try:
+                det.detect(blank)
+                det.detect(blank)
+                break
+            except Exception as e:  # noqa: BLE001
+                if attempt == 1:
+                    raise
+                import logging
+
+                logging.getLogger(__name__).warning("detector warm-up failed (%s); rebuilding once", str(e)[:120])
+                det = _build_detector(cfg)
+    return det
+
+
+def _build_detector(cfg):
     d = cfg.detector
     if d.backend == "stub":
         return StubDetector()

@@ -44,9 +44,11 @@ def test_handle_and_can_targets_reachable(kin, cfg_default):
     z = fr.pelvis_z_from_floor(f.handle_grasp_height_m)
     handle = [a.standoff_m - f.handle_protrusion_m, -a.lateral_offset_m, z]
     pre = [handle[0] - f.pregrasp_offset_m, handle[1] - 0.015, z]
+    nudge = 0.12   # ensure_reachable() may step forward up to this much
     for p in (handle, pre):
-        r = kin.ik("right", p, [1, 0, 0], dir_weight=cfg_default.arm.ik_dir_weight)
-        assert r.ok, (p, r.pos_err)
+        ok = any(kin.ik("right", [p[0] - dx, p[1], p[2]], [1, 0, 0], dir_weight=cfg_default.arm.ik_dir_weight).ok
+                 for dx in (0.0, nudge / 2, nudge))
+        assert ok, p
     can = [f.reach_standoff_m + f.can_depth_in_cavity_m, 0.0, fr.pelvis_z_from_floor(f.can_shelf_height_m)]
     hand = [can[0], can[1] + f.can_diameter_m / 2 + 0.01, can[2]]
     r = kin.ik("left", hand, [1, 0, 0], dir_weight=cfg_default.arm.ik_dir_weight)

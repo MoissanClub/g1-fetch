@@ -141,18 +141,16 @@ class UnitreeLoco(LocoBase):
         self.client = LocoClient()
         self.client.SetTimeout(5.0)
         self.client.Init()
-        self._pose = Pose2D(0.0, 0.0, 0.0)
+        self._odom_msg = None
         self._pose_t = 0.0
-        self._lock = threading.Lock()
         topic = str(cfg.loco.get("odom_topic", "rt/odommodestate"))
         self._sub = ChannelSubscriber(topic, SportModeState_)
         self._sub.Init(self._on_odom, 10)
         self._required = set(int(v) for v in cfg.loco.required_fsm_ids)
 
     def _on_odom(self, msg):
-        with self._lock:
-            self._pose = Pose2D(float(msg.position[0]), float(msg.position[1]), float(msg.imu_state.rpy[2]))
-            self._pose_t = time.time()
+        self._odom_msg = msg          # parsed lazily in pose(); keep the 50 Hz callback trivial (GIL)
+        self._pose_t = time.time()
 
     def start(self):
         t0 = time.time()
@@ -160,32 +158,56 @@ class UnitreeLoco(LocoBase):
             if time.time() - t0 > 5.0:
                 raise LocoError("no odometry received (State Estimator service >= 1.0.0.1 required; topic loco.odom_topic)")
             time.sleep(0.05)
-        code, fsm = self.client.GetFsmId()
+        # RPC right after Init() races DDS discovery with the sport service (error 3104): settle, then retry.
+        time.sleep(1.0)
+        self.client.SetTimeout(1.5)
+        code, fsm = -1, None
+        for attempt in range(10):
+            code, fsm = self.client.GetFsmId()
+            if code == 0:
+                break
+            log.warning("GetFsmId attempt %d failed with %s; retrying", attempt + 1, code)
+            time.sleep(0.5)
         if code != 0:
             raise LocoError(f"GetFsmId failed: {code}")
         if int(fsm) not in self._required:
             raise LocoError(f"robot FSM id is {fsm}; expected one of {sorted(self._required)} (main controller running)")
-        log.info("loco ready, fsm_id=%s pose=%s", fsm, self._pose)
+        log.info("loco ready, fsm_id=%s pose=%s", fsm, self.pose())
+
+    def _set_velocity_noreply(self, vx: float, vy: float, yaw: float, duration: float):
+        """SetVelocity (api 7105) as a no-reply RPC. On this robot the sport service executes the command but
+        the reply never arrives (error 3104 after the client timeout), which stalled the 10 Hz loop."""
+        import json
+
+        from unitree_sdk2py.g1.loco.g1_loco_api import ROBOT_API_ID_LOCO_SET_VELOCITY
+
+        p = {"velocity": [float(vx), float(vy), float(yaw)], "duration": float(duration)}
+        return self.client._CallNoReply(ROBOT_API_ID_LOCO_SET_VELOCITY, json.dumps(p))
 
     def _send(self, cmd: VelCmd):
-        code = self.client.SetVelocity(cmd.vx, cmd.vy, cmd.yaw, float(self.cfg.cmd_duration_s))
-        if code != 0:
-            log.warning("SetVelocity returned %s", code)
+        code = self._set_velocity_noreply(cmd.vx, cmd.vy, cmd.yaw, float(self.cfg.cmd_duration_s))
+        if code not in (0, None):
+            log.warning("SetVelocity (no-reply) returned %s", code)
 
     def stop(self):
         self.last = VelCmd()
-        for _ in range(2):
-            self.client.SetVelocity(0.0, 0.0, 0.0, 0.5)
+        for _ in range(3):
+            self._set_velocity_noreply(0.0, 0.0, 0.0, 0.5)
+            time.sleep(0.02)
 
     def pose(self) -> Pose2D:
-        with self._lock:
-            if time.time() - self._pose_t > 0.5:
-                log.warning("odometry stale (%.2fs)", time.time() - self._pose_t)
-            return Pose2D(self._pose.x, self._pose.y, self._pose.yaw)
+        if time.time() - self._pose_t > 0.5:
+            log.warning("odometry stale (%.2fs)", time.time() - self._pose_t)
+        m = self._odom_msg
+        return Pose2D(float(m.position[0]), float(m.position[1]), float(m.imu_state.rpy[2]))
 
     def fsm_id(self) -> int:
-        code, fsm = self.client.GetFsmId()
-        return int(fsm) if code == 0 else -1
+        for _ in range(3):
+            code, fsm = self.client.GetFsmId()
+            if code == 0:
+                return int(fsm)
+            time.sleep(0.3)
+        return -1
 
 
 class MockLoco(LocoBase):

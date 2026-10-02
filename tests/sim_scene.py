@@ -17,11 +17,12 @@ from g1_fetch.skills.door import DoorModel
 
 class Scene:
     def __init__(self, rb, fridge_x: float = 1.8, fridge_yc: float = 0.0, width: float = 0.6, height: float = 1.7,
-                 hinge_side: str = "left", handle_h: float = 1.0, can_h: float = 0.95, person_xy=(-1.5, 0.0)):
+                 hinge_side: str | None = None, handle_h: float = 1.0, can_h: float = 0.95, person_xy=(-1.5, 0.0)):
         self.rb = rb
         self.fr = rb.frames
         self.width = width
         self.height = height
+        hinge_side = hinge_side or str(rb.cfg.fridge.hinge_side)
         self.hinge_side = hinge_side
         self.can_h = can_h
         self.person_xy = np.array(person_xy, dtype=float)

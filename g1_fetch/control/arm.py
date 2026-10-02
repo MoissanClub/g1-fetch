@@ -324,40 +324,41 @@ class UnitreeArmStreamer(ArmStreamer):
         self.msg = unitree_hg_msg_dds__LowCmd_()
         self.pub = ChannelPublisher("rt/arm_sdk", LowCmd_)
         self.pub.Init()
+        # rt/lowstate is published at 500 Hz. No handler: the SDK would deserialize every message in Python
+        # (~1.5 ms each, under the GIL) and starve perception and even the RPC reply thread on the Orin.
+        # Instead the streamer polls the newest sample (reader history keep-last 1) at its own 50 Hz rate.
         self.sub = ChannelSubscriber("rt/lowstate", LowState_)
-        self.sub.Init(self._on_state, 10)
-        self._q = None
-        self._tau = None
+        self.sub.Init()
+        self._msg = None
         self._waist = 0.0
-        self._state_lock = threading.Lock()
         self.mode_machine = None
 
-    def _on_state(self, msg):
-        q = np.array([msg.motor_state[i].q for i in range(35)], dtype=float)
-        tau = np.array([msg.motor_state[i].tau_est for i in range(35)], dtype=float)
-        with self._state_lock:
-            self._q = q
-            self._tau = tau
-            self.mode_machine = int(msg.mode_machine)
+    def _poll_state(self, timeout: float = 0.01):
+        msg = self.sub.Read(timeout)
+        if msg is not None:
+            self._msg = msg
+        return self._msg
 
     def _ready(self) -> bool:
-        with self._state_lock:
-            if self._q is None:
-                return False
-            if self.mode_machine not in (1, 4):   # 1 = g1_23dof, 4 = g1_23dof_rev_1_0 (Unitree URDF table)
-                log.warning("mode_machine=%s (expected 1 or 4 for a 23-DoF G1)", self.mode_machine)
-            self._waist = float(self._q[WAIST_YAW])
-            return True
+        msg = self._poll_state(0.5)
+        if msg is None:
+            return False
+        self.mode_machine = int(msg.mode_machine)
+        if self.mode_machine not in (1, 4):   # 1 = g1_23dof, 4 = g1_23dof_rev_1_0 (Unitree URDF table)
+            log.warning("mode_machine=%s (expected 1 or 4 for a 23-DoF G1)", self.mode_machine)
+        self._waist = float(msg.motor_state[WAIST_YAW].q)
+        return True
 
     def measured(self, side: str) -> np.ndarray:
-        with self._state_lock:
-            return self._q[MOTOR_IDX[side]].copy()
+        ms = self._msg.motor_state
+        return np.array([ms[i].q for i in MOTOR_IDX[side]], dtype=float)
 
     def measured_tau(self, side: str) -> np.ndarray:
-        with self._state_lock:
-            return self._tau[MOTOR_IDX[side]].copy()
+        ms = self._msg.motor_state
+        return np.array([ms[i].tau_est for i in MOTOR_IDX[side]], dtype=float)
 
     def _write(self):
+        self._poll_state()
         m = self.msg
         m.motor_cmd[WEIGHT_IDX].q = float(self.weight)
         # hold the waist yaw so it does not go limp under arm_sdk authority

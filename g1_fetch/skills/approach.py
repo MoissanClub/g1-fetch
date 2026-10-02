@@ -44,12 +44,20 @@ def approach(rb) -> ApproachResult:
                 raise SkillFailed("approach timeout")
             obs = observe(rb)
             frame = obs.frame
-            fridge = best(obs.dets, "fridge")
+            fridge = best([d for d in obs.dets if d.conf >= float(a.get("min_conf", 0.25))], "fridge")
             near = last_plane is not None and last_plane.distance_x < float(a.slow_zone_m)
             if fridge is None:
                 lost += 1
-                if near:
-                    box = _full_box(frame)          # the door fills the view when close
+                if near or last_plane is None:
+                    # the door fills the view when close (and a retry may start close): try the whole frame
+                    box = _full_box(frame)
+                    probe = door_plane(frame, box, rb.frames)
+                    if probe is None or probe.distance_x > float(a.slow_zone_m):
+                        if lost > 10:
+                            raise SkillFailed("lost the fridge during approach")
+                        rb.loco.stop()
+                        time.sleep(period)
+                        continue
                 elif lost > 10:
                     raise SkillFailed("lost the fridge during approach")
                 else:
@@ -80,6 +88,13 @@ def approach(rb) -> ApproachResult:
             if plane is not None and dist < float(a.slow_zone_m):
                 handle_prior = handle_from_prior(plane, rb.cfg, rb.frames)
                 lat_err = float(handle_prior[1] - lateral_target)
+                # when the handle itself is visible (close range), servo on it instead of the edge prior
+                handle_det = best([d for d in obs.dets if d.conf >= float(a.get("handle_min_conf", 0.2))], "handle")
+                if handle_det is not None:
+                    hp = box_to_point(frame, handle_det, rb.frames, shrink=0.5)
+                    if hp is not None and abs(float(hp[0]) - dist) < 0.25:
+                        handle_prior = hp
+                        lat_err = float(hp[1] - lateral_target)
             vx = float(a.k_x) * (dist - standoff)
             if dist < float(a.slow_zone_m):
                 vx = max(-0.1, min(0.15, vx))
@@ -103,8 +118,9 @@ def approach(rb) -> ApproachResult:
                 obs = observe(rb)
                 plane2 = door_plane(obs.frame, last_box, rb.frames) or plane
                 handle_prior = handle_from_prior(plane2, rb.cfg, rb.frames)
-                rb.log.event("approach_done", dist=plane2.distance_x, yaw_err=plane2.yaw_error,
-                             plane_width=plane2.width, handle_prior=handle_prior.tolist())
+                handle_det = best([d for d in obs.dets if d.conf >= float(a.get("handle_min_conf", 0.2))], "handle")
+                rb.log.event("approach_done", dist=plane2.distance_x, yaw_err=plane2.yaw_error, plane_width=plane2.width,
+                             handle_prior=handle_prior.tolist(), handle_detected=None if handle_det is None else list(handle_det.box))
                 return ApproachResult(plane2, obs.frame, tuple(last_box), handle_prior)
             rb.loco.set_velocity(vx, vy, yaw)
             time.sleep(period)

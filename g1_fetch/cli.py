@@ -94,18 +94,17 @@ def cmd_check(args):
         time.sleep(0.5)
         print(side, "state", None if h.state() is None else np.round(h.state(), 2))
         h.close()
-    print("== camera ==")
+    print("== detector (built before the camera: TensorRT must initialise CUDA before pyrealsense2 starts) ==")
     try:
         from .perception.camera import RealSenseCamera
+        from .perception.detector import build_detector
 
+        det = build_detector(cfg)
+        print("== camera ==")
         cam = RealSenseCamera(cfg)
         f = cam.read()
         valid = float((f.depth > 0).mean())
         print(f"color {f.color.shape} depth valid {valid:.0%} intrinsics {f.intrinsics}")
-        print("== detector ==")
-        from .perception.detector import build_detector
-
-        det = build_detector(cfg)
         det.detect(f.color)
         ts = []
         for _ in range(10):
@@ -165,6 +164,47 @@ def cmd_detect(args):
     return 0
 
 
+def cmd_loopbench(args):
+    """Time every stage of the sense-act loop on the real stack. Sends only zero-velocity commands."""
+    cfg = load_config(args.config, _overrides(args.set))
+    import numpy as np
+
+    from .perception.localize import door_plane
+    from .robot import build_robot
+    from .skills.approach import _full_box
+    from .skills.common import observe
+
+    rb = build_robot(cfg, dry_run=False)
+    try:
+        rows = []
+        for i in range(args.n):
+            t0 = time.perf_counter()
+            frame = rb.camera.read()
+            t1 = time.perf_counter()
+            dets = rb.detector.detect(frame.color)
+            t2 = time.perf_counter()
+            rb.log.frame(frame, dets)
+            t3 = time.perf_counter()
+            plane = door_plane(frame, _full_box(frame), rb.frames)
+            t4 = time.perf_counter()
+            pose = rb.loco.pose()
+            t5 = time.perf_counter()
+            rb.loco.set_velocity(0.0, 0.0, 0.0)
+            t6 = time.perf_counter()
+            rows.append([(t1 - t0), (t2 - t1), (t3 - t2), (t4 - t3), (t5 - t4), (t6 - t5)])
+            print(f"tick {i}: cam {1e3*(t1-t0):.0f} det {1e3*(t2-t1):.0f} log {1e3*(t3-t2):.0f} plane {1e3*(t4-t3):.0f} "
+                  f"pose {1e3*(t5-t4):.0f} setvel {1e3*(t6-t5):.0f} ms | dets {[(d.label, round(d.conf, 2)) for d in dets][:3]} "
+                  f"plane {'none' if plane is None else f'{plane.distance_x:.2f}m'}", flush=True)
+            time.sleep(0.1)
+        m = np.median(np.array(rows), axis=0) * 1e3
+        print(f"MEDIAN ms: cam {m[0]:.0f} det {m[1]:.0f} log {m[2]:.0f} plane {m[3]:.0f} pose {m[4]:.0f} setvel {m[5]:.0f}")
+        print("arm tracking err:", rb.arms.tracking_error("left"), "fsm", rb.loco.fsm_id())
+    finally:
+        rb.safe_stop(release_arms=True)
+        rb.close()
+    return 0
+
+
 def cmd_geometry(args):
     cfg = load_config(args.config, _overrides(args.set))
     import pinocchio  # noqa: F401
@@ -214,6 +254,10 @@ def main(argv=None):
     p = sub.add_parser("geometry")
     _common(p)
     p.set_defaults(fn=cmd_geometry)
+    p = sub.add_parser("loopbench", help="time the sense-act loop on the real stack (zero-velocity commands only)")
+    _common(p)
+    p.add_argument("-n", type=int, default=20)
+    p.set_defaults(fn=cmd_loopbench)
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")

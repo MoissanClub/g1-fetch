@@ -111,6 +111,8 @@ class Robot:
             log.warning("stop failed: %s", e)
         if release_arms:
             try:
+                for side in ("left", "right"):
+                    self.arms.set_target(side, self.arms.measured(side))   # hold where they are, then fade out
                 self.arms.disable()
             except Exception as e:
                 log.warning("arm release failed: %s", e)
@@ -162,8 +164,10 @@ def build_robot(cfg: Cfg, dry_run: bool = False, camera_source: str | None = Non
             set_arm_action_service(False)
         except Exception as e:  # the service may not exist on every firmware
             log.warning("could not switch off the arm action service: %s", e)
+    # Build and warm up the detector BEFORE opening the RealSense: on PC2 a TensorRT engine created after
+    # pyrealsense2 has started fails with "cuTensor permutate execute failed" (CUDA stream-capture error).
+    det = detector if detector is not None else build_detector(cfg)   # warms up (TensorRT) before the camera opens
     camera = make_camera(cfg, camera_source)
-    det = detector if detector is not None else build_detector(cfg)
     loco = UnitreeLoco(cfg)
     arms = UnitreeArmStreamer(cfg)
     hands = {"left": UnitreeBraincoHand(cfg, "left"), "right": UnitreeBraincoHand(cfg, "right")}

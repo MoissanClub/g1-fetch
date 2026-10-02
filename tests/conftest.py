@@ -5,7 +5,7 @@ from g1_fetch.config import load_config
 
 FAST = {
     "loco": {"max_vx": 0.6, "max_vy": 0.4, "max_yaw": 1.2, "rate_hz": 20,
-             "search": {"settle_s": 0.05, "yaw_rate": 1.0, "step_rad": 0.6},
+             "search": {"settle_s": 0.05, "yaw_rate": 1.2, "conf": 0.3},
              "approach": {"k_x": 1.0, "k_y": 1.2, "k_yaw": 2.0, "timeout_s": 40},
              "return": {"k_pos": 1.2, "k_yaw": 2.5, "timeout_s": 40}},
     "arm": {"cart_speed": 1.0, "cart_step_s": 0.005, "weight_ramp_s": 0.1, "max_joint_vel": 20.0, "rate_hz": 200},

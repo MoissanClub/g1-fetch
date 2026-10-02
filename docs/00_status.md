@@ -27,6 +27,14 @@
 - Code fixes from the bring-up: odometry topic, `mode_machine` 4 accepted, read-only hand objects for `cli check`,
   measured camera geometry in the default config.
 
+## Session 3 (2026-10-02): first motion runs
+- Runs 1–4 (`run --until approach`): arms-home via arm_sdk works; search found the fridge (continuous rotation, 5.7 s);
+  approach reached 0.47 m and squared up, but stopped laterally off the handle (hinge side was assumed wrong) and
+  the loop ran at 0.2 Hz. Root causes and fixes in `05_deploy_learnings.md` (GIL starvation from 500 Hz lowstate
+  deserialization, controller velocity deadband, search threshold). Loop now ~6 Hz on the full stack.
+- Stance per the user: handle centred in front of the body, ~0.45 m from the door; handle on the left edge, hinge right.
+- Next: rerun `--until approach` with the new stance, then the door phase with `--until open_door`.
+
 ## Not done / not possible here
 - Nothing has touched the robot. All motion parameters are geometric estimates.
 - No training of any kind (user constraint on the workstation GPUs; no demonstrations exist anyway).

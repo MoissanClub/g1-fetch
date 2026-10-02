@@ -21,6 +21,7 @@ class TaskState:
     appr: object = None
     door: object = None
     phase: str = ""
+    holding_can: bool = False
     history: list = field(default_factory=list)
 
 
@@ -43,6 +44,7 @@ class FetchDrinkTask:
 
     def _fetch_can(self):
         grab_can.fetch_can(self.rb, self.state.door)
+        self.state.holding_can = True
 
     def _close_door(self):
         close_door.close_door(self.rb, self.state.door)
@@ -53,6 +55,7 @@ class FetchDrinkTask:
 
     def _handover(self):
         return_handover.handover(self.rb)
+        self.state.holding_can = False
 
     def _prepare(self):
         rb = self.rb
@@ -93,7 +96,8 @@ class FetchDrinkTask:
         except KeyboardInterrupt:
             rb.log.event("task_interrupted", phase=self.state.phase)
         finally:
-            rb.safe_stop(release_arms=False)
+            # hand the arms back to the built-in controller unless we are still holding the can
+            rb.safe_stop(release_arms=not self.state.holding_can)
         return ok
 
     def _run_phase(self, name: str, fn, retries: int):
