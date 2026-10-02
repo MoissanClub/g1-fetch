@@ -15,6 +15,8 @@ docs/01_research.md         options considered (detectors, VLMs, VLAs, RL), plat
 docs/02_decisions.md        what was chosen and why (D1..D11)
 docs/03_architecture.md     frames, modules, state machine, timing, safety
 docs/04_deploy_checklist.md PC2 setup, measurements, incremental hardware bring-up
+docs/05_deploy_learnings.md  wrong assumptions and mistakes from the first hardware sessions
+docs/06_dependency_learnings.md  Jetson dependency pitfalls (CUDA/TensorRT/torch/conda) and the rules that avoid them
 configs/default.yaml        every tunable, with MEASURE markers for values to check on the robot
 g1_fetch/                   the package (perception / control / skills / task / cli)
 models/                     detector checkpoints (see models/README.md)
