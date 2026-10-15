@@ -179,12 +179,9 @@ def grasp_handle(rb, door: DoorModel, side: str) -> None:
         e = entry + x_dir * dx
         wait_user(rb, f"{side} hand into the gap beside the plate {np.round(e, 3)}")
         cart_move(rb, side, e, x_dir, palm, speed=0.06)
-        rb.arms.set_gain(side, float(rb.cfg.arm.kp_compliant))
-        try:
-            cart_move(rb, side, e + palm * (scoop + 0.01), x_dir, palm, speed=0.04, tol=0.05, settle=False)   # slide onto the plate
-            time.sleep(0.4)
-        finally:
-            rb.arms.set_gain(side, float(rb.cfg.arm.kp))
+        # slide sideways until the plate sits against the palm: target 1 cm past the plate centre at normal
+        # stiffness (the plate stops the hand; a compliant arm stalled short of it on the door's friction)
+        cart_move(rb, side, e + palm * scoop, x_dir, palm, speed=0.03, tol=0.05, settle=True)   # ends side_off from the plate
         hand.hook()
         closed = hand.closed_fraction()
         if closed is None or closed <= target - margin:
@@ -261,6 +258,11 @@ def verify_open(rb, appr, frame_before) -> bool:
 
 def open_door(rb, appr) -> DoorModel:
     side = rb.cfg.task.door_hand
+    # the depth-based handle finder must not see the hand: park the arm before localizing (matters on retries,
+    # where the hand is still hovering at the door and was once picked up as the "bar")
+    if np.max(np.abs(rb.arms.cmd[side] - np.array(getattr(rb.cfg.arm.home_q, side), dtype=float))) > 0.1:
+        go_home(rb, side, duration=1.5)
+        time.sleep(0.3)
     pose0 = rb.loco.pose()
     top_edge = str(rb.cfg.fridge.get("grip", "bar")) == "top_edge"
     handle_p, src = locate_top_edge(rb, appr) if top_edge else locate_handle(rb, appr)

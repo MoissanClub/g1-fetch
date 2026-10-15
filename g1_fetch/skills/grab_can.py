@@ -6,7 +6,7 @@ import logging
 import numpy as np
 
 from ..perception.localize import can_axis_from_box
-from .common import SkillFailed, cart_move, ensure_reachable, look_for, to_pelvis, wait_user
+from .common import SkillFailed, cart_move, ensure_reachable, look_for, to_pelvis, to_world, wait_user
 from .door import DoorModel
 
 log = logging.getLogger(__name__)
@@ -25,16 +25,32 @@ def go_to_reach_pose(rb, door: DoorModel):
 
 
 def locate_can(rb, door: DoorModel) -> tuple[np.ndarray, str]:
-    det, frame = look_for(rb, "can", max_frames=10)
-    if det is not None:
-        p = can_axis_from_box(frame, det, rb.frames, rb.cfg)
-        if p is not None:
-            rb.log.event("can_detected", p=p.tolist(), conf=det.conf, height=rb.frames.floor_height(p))
-            return p, "detector"
+    """Can position in the pelvis frame: D435i detection, else walk in a step and look again, else a prior.
+
+    Odometry drifts during the two pulls, so the open fridge may be further than the door model says; the prior
+    is therefore placed relative to the robot (in front of the can hand) rather than at the modelled cavity.
+    """
     f = rb.cfg.fridge
-    pose = rb.loco.pose()
-    c = to_pelvis(pose, door.cavity_center_w())
-    p = np.array([c[0] + float(f.can_depth_in_cavity_m), c[1], rb.frames.pelvis_z_from_floor(float(f.can_shelf_height_m))])
+    r = rb.cfg.loco.return_
+    for step in range(2):
+        det, frame = look_for(rb, "can", max_frames=10)
+        if det is not None:
+            p = can_axis_from_box(frame, det, rb.frames, rb.cfg)
+            if p is not None:
+                rb.log.event("can_detected", p=p.tolist(), conf=det.conf, height=rb.frames.floor_height(p), step=step)
+                return p, "detector"
+        if step == 0:
+            # nothing seen: the shelf may be above the D435i's view ceiling at this range; step in and look again
+            pose = rb.loco.pose()
+            ahead = to_world(pose, [float(f.get("can_search_step_m", 0.15)), 0.0, 0.0])
+            rb.log.event("can_search_step", m=float(f.get("can_search_step_m", 0.15)))
+            try:
+                rb.loco.drive_to(ahead[0], ahead[1], None, 0.04, 0.05, float(r.k_pos), float(r.k_yaw), timeout=12.0, abort=rb.abort_requested)
+            except Exception as e:  # LocoError
+                log.warning("can search step failed: %s", e)
+    side = rb.cfg.task.can_hand
+    y = 0.10 if side == "left" else -0.10
+    p = np.array([0.40, y, rb.frames.pelvis_z_from_floor(float(f.can_shelf_height_m))])
     rb.log.event("can_prior", p=p.tolist())
     return p, "prior"
 
@@ -47,7 +63,7 @@ def grab_can(rb, p_can: np.ndarray) -> None:
     x_dir = np.array([1.0, 0.0, 0.0])
     radius = float(f.can_diameter_m) / 2
     hand_p = p_can - palm * (radius + 0.01)           # palm centre beside the can axis
-    hand_p = ensure_reachable(rb, side, hand_p, x_dir)
+    hand_p = ensure_reachable(rb, side, hand_p, x_dir, max_nudge=float(f.get("can_max_nudge_m", 0.30)))
     pre = hand_p - x_dir * float(f.pregrasp_offset_m)
     hand.open()
     wait_user(rb, f"{side} hand to can pre-grasp {np.round(pre, 3)}")

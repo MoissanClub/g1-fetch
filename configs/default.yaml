@@ -66,7 +66,7 @@ loco:
   max_vx: 0.30
   max_vy: 0.20
   max_yaw: 0.60
-  deadband_v: 0.08                  # the built-in controller ignores smaller speeds (robot stayed put at 0.05 m/s)
+  deadband_v: 0.12                  # the built-in controller ignores creep speeds (stood still at 0.05 and 0.10 m/s)
   deadband_w: 0.08
   required_fsm_ids: [500, 501]
   search:
@@ -88,7 +88,7 @@ loco:
     k_x: 0.6
     k_y: 0.8
     tol_yaw: 0.05
-    tol_dist: 0.04
+    tol_dist: 0.06
     tol_lat: 0.04
     lateral_offset_m: 0.0           # pelvis y offset from the handle (0 = handle centred in front; teleop stance per user)
     handle_min_conf: 0.2            # use a visible handle detection for the lateral servo at close range
@@ -125,7 +125,7 @@ hand:
   hook: [0.2, 0.0, 0.9, 0.9, 0.9, 0.9]     # fingers curled, thumb aside, for a bar handle
   close_time_s: 0.8
   finger_reach_m: 0.08             # open fingertips ahead of the palm centre (ee frame origin)
-  hook_side_offset_m: 0.03         # hand centre beside the plate so the fingers pass it before curling
+  hook_side_offset_m: 0.015        # final hand-centre offset beside the plate (hooked twice at this value on 2026-10-16)
   scoop_m: 0.05                    # enter the gap this much further from the plate, then slide onto it before closing
   grasp_margin: 0.08               # fingers must stop at least this far short of the commanded closure to count as a grasp
 
@@ -155,7 +155,9 @@ fridge:
   open_angle_deg: 95                # stop retreating once the door reaches this angle
   edge_standoff_m: 0.30             # pelvis to the free edge when hooking/pushing it (MEASURE)
   min_open_deg: 60                  # do not step into the cavity front unless the door is at least this open
-  reach_side_shift_m: 0.25          # stand this far toward the hinge-far side of the opening when reaching in
+  reach_side_shift_m: 0.15          # stand this far toward the hinge-far side of the opening when reaching in
+  can_search_step_m: 0.15           # step in this far and look again when no can is seen from the reach pose
+  can_max_nudge_m: 0.30             # the reach-in may walk this far forward to reach a seen can (odometry drift)
   cavity_depth_jump_m: 0.30         # door considered open when the box median depth grows by this
   # reaching in
   reach_standoff_m: 0.30            # pelvis to the closed-door plane when reaching for the can (MEASURE; can at 0.42 m is the reach limit)

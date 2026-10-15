@@ -35,6 +35,23 @@
 - Stance per the user: handle centred in front of the body, ~0.45 m from the door; handle on the left edge, hinge right.
 - Next: rerun `--until approach` with the new stance, then the door phase with `--until open_door`.
 
+## Session 4 (2026-10-16, home fridge, two cameras): door opens reliably, reach-in does not
+Best run (`data/runs/20261016-014645` on PC2): search 2 s (head cam + D435i cross-check), approach 4 s to 0.42 m,
+plate handle found from depth (5.8 cm proud, 383 pts), scoop hook on the first try (closure 0.72/0.90), pull to 36°
+(depth jump 0.81 m), second pull on the swung handle to 67°, `open_door` done in 86 s. Then `fetch_can` failed: the
+robot stood ~0.5 m from the opening instead of 0.30 (odometry drift after ~1 m of walking with the door) and no can
+was detected by the D435i, so the prior target was 0.27 m out of reach.
+- Works now: two-camera search with cross-check, depth-based plate handle localization, closure-verified hook with
+  in-place retries, pull watchdog on the error increase, second pull, TTS status + log-to-speech, head-camera
+  open retry / RealSense-only fallback.
+- Open problems, in order: (1) reach-in pose must be re-measured from live depth, not odometry; (2) can detection
+  inside the cavity (shelf above the D435i view ceiling at 0.5 m; head camera not yet used for it);
+  (3) grasp is open-loop in Cartesian space (no visual servo of the hand); (4) SR300 drops off USB repeatedly;
+  (5) the simulator's door physics do not reproduce the second pull (dry-run test red at that step).
+- Changed this session but not yet run on hardware: `locate_can` steps in 0.15 m and looks again before using a
+  prior placed in front of the can hand; `can_max_nudge_m` 0.30; `reach_side_shift_m` 0.15; arm parked before
+  re-localizing the handle.
+
 ## Not done / not possible here
 - Nothing has touched the robot. All motion parameters are geometric estimates.
 - No training of any kind (user constraint on the workstation GPUs; no demonstrations exist anyway).

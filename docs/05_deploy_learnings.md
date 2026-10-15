@@ -41,6 +41,19 @@ touching this robot. "Assumed" = something I took from docs or defaults without 
 | B12 | Assumed `--step` mode (press Enter between motions) would be usable | Over a non-interactive SSH session it cannot be | Use `--until PHASE` for scope, and SIGINT (`pkill -INT`) for a clean stop that runs `safe_stop()`; SIGTERM from `timeout` skips the `finally` block |
 | B13 | Wrote a tilt analysis predicting the fridge is invisible beyond ~2.4 m, then still let the first search assume a 0.25 threshold | The analysis was right; I did not carry it into the search parameters | When the geometry says a target will be weak, lower the acceptance threshold and demand persistence instead |
 
+## B2. Session 4 additions (home fridge, two cameras)
+| # | What happened | Lesson |
+|---|---|---|
+| B14 | I concluded "no handle" from frames in which the handle was simply out of view (white plate on white door, above the D435i's view ceiling) and switched to a top-edge grip | A negative from a camera that cannot see the region is not evidence. Check the view ceiling before reading absence into a frame; ask when the frames cannot settle it |
+| B15 | The head-camera "handle" detections were the seam between the doors; the plate finder from depth (points 1.5–8 cm proud of the door plane) is what worked | White-on-white handles are a depth problem, not an RGB problem |
+| B16 | A 0.90 hook that reported closure 0.90 was treated as a grasp | Compare finger closure with the commanded closure; a hand that reaches its command grabbed nothing |
+| B17 | Pull watchdog used absolute tracking error; the hand was already pressed against the plate | Watch the increase from the baseline at the start of the move |
+| B18 | Phase retry re-grasped a handle that had already swung away after a successful pull (stage B drive timed out) | A verified-open door is a success for the phase; later failures must not re-run the grasp |
+| B19 | Standing centred on the modelled cavity after two pull-and-back walks put the robot 0.2 m off: odometry drift | Every manipulation stance must be re-measured from live depth right before the reach, never from a model built a metre of walking ago |
+| B20 | `pkill -f "<pattern>"` killed my own SSH shell twice more | Kill by PID list excluding `$$` and `$PPID` |
+| B21 | Velocity creep speeds of 0.05 and 0.10 m/s do nothing on this controller | Minimum effective speed ≈ 0.14 m/s; tolerances must be wider than what a 0.14 m/s burst can land in |
+| B22 | The SR300 re-enumerated on USB several times; opening it right after a reconnect fails (`VIDIOC_REQBUFS`) | Open once with a settle, retry, and fall back to RealSense-only; fix the cable |
+
 ## C. Verified good (keep)
 - Lean GPU stack + Jetson-index torch 2.11: detector 51 ms standalone, 60–90 ms on camera frames once the GIL load is gone.
 - RealSense through pip `pyrealsense2`; aligned RGB-D 640×480 at 30 fps; floor-plane self-calibration of camera height/tilt.
