@@ -17,6 +17,8 @@ docs/03_architecture.md     frames, modules, state machine, timing, safety
 docs/04_deploy_checklist.md PC2 setup, measurements, incremental hardware bring-up
 docs/05_deploy_learnings.md  wrong assumptions and mistakes from the first hardware sessions
 docs/06_dependency_learnings.md  Jetson dependency pitfalls (CUDA/TensorRT/torch/conda) and the rules that avoid them
+docs/07_vista_notes.md       notes on VISTA (MIT 2026) and what transfers to the robot
+docs/08_session4_learnings.md  home-fridge session: what works, what failed, mistakes, numbers, next steps
 configs/default.yaml        every tunable, with MEASURE markers for values to check on the robot
 g1_fetch/                   the package (perception / control / skills / task / cli)
 models/                     detector checkpoints (see models/README.md)
