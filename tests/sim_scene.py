@@ -50,7 +50,7 @@ class Scene:
         hand_w = to_world(pose, rb.kin.fk(door_hand, rb.arms.measured(door_hand))[:3, 3])
         closed = rb.hands[door_hand].closed_fraction() or 0.0
         dh = hand_w - self.door.handle_w()
-        if not self.hooked and closed > 0.5 and math.hypot(dh[0], dh[1]) < 0.06 and abs(dh[2]) < 0.18:
+        if not self.hooked and closed > 0.5 and abs(dh[0]) < 0.08 and abs(dh[1]) < 0.08 and abs(dh[2]) < 0.18:
             self.hooked = True
             self.log.append("hooked")
         if self.hooked:
@@ -83,16 +83,22 @@ class Scene:
                 self.can_w = chw.copy()
 
     # ---- rendering ----
-    def camera_pose_w(self, pose: Pose2D) -> np.ndarray:
+    def camera_pose_w(self, pose: Pose2D, cam: str = "depth") -> np.ndarray:
         T_w_pelvis = make_T([pose.x, pose.y, 0.0], [0.0, 0.0, pose.yaw])
-        return T_w_pelvis @ self.fr.T_pelvis_optical
+        T = self.fr.T_pelvis_head_optical if cam == "head" else self.fr.T_pelvis_optical
+        return T_w_pelvis @ T
 
-    def render(self, seq: int):
+    def render_head(self, seq: int):
+        """RGB-only frame from the head camera (depth rendered then dropped; colour encodes range for debugging)."""
+        color, depth = self.render(seq, cam="head")
+        return color, None
+
+    def render(self, seq: int, cam: str = "depth"):
         self._update()
         rb = self.rb
-        intr = rb.camera.intrinsics
+        intr = rb.camera.intrinsics if cam == "depth" else rb.head_cam.intrinsics
         pose = rb.loco.pose()
-        T_w_cam = self.camera_pose_w(pose)
+        T_w_cam = self.camera_pose_w(pose, cam)
         R, o = T_w_cam[:3, :3], T_w_cam[:3, 3]
         us, vs = np.meshgrid(np.arange(intr.width), np.arange(intr.height))
         d_cam = intr.deproject(us, vs, np.ones_like(us, dtype=float))
@@ -153,11 +159,11 @@ class Scene:
         return np.where(hit, np.minimum(best, t), best)
 
     # ---- detections from projected boxes ----
-    def detect(self, seq: int) -> list[Detection]:
+    def detect(self, seq: int, cam: str = "depth") -> list[Detection]:
         rb = self.rb
-        intr = rb.camera.intrinsics
+        intr = rb.camera.intrinsics if cam == "depth" else rb.head_cam.intrinsics
         pose = rb.loco.pose()
-        T_cam_w = inv_T(self.camera_pose_w(pose))
+        T_cam_w = inv_T(self.camera_pose_w(pose, cam))
         floor_z = -self.fr.pelvis_height_m
         out = []
         fx = self.door.hinge_w[0]
@@ -205,10 +211,19 @@ class Scene:
 
 
 def attach(rb, **kw) -> Scene:
-    """Wire a Scene into a dry-run robot's SyntheticCamera, StubDetector and MockHands."""
+    """Wire a Scene into a dry-run robot's SyntheticCamera(s), StubDetector and MockHands."""
     scene = Scene(rb, **kw)
     rb.camera.producer = scene.render
-    rb.detector.script = scene.detect
+    if rb.head_cam is not None:
+        rb.head_cam.producer = scene.render_head
+    # the stub detector receives the colour image; tell the two cameras apart by their shape
+    hw = None if rb.head_cam is None else (rb.head_cam.intrinsics.height, rb.head_cam.intrinsics.width)
+
+    def detect_by_image(color):
+        cam = "head" if hw is not None and color.shape[:2] == hw else "depth"
+        return scene.detect(0, cam)
+
+    rb.detector.script_image = detect_by_image
     orig_event = rb.log.event
 
     def _event(name, **data):
@@ -227,7 +242,7 @@ def attach(rb, **kw) -> Scene:
             rb.arms.disturbance[rb.cfg.task.can_hand] = np.zeros(5)
 
     rb.log.event = _event
-    for hand in rb.hands.values():
+    for side, hand in rb.hands.items():
         orig = hand.set
 
         def _set(q, _orig=orig):
@@ -235,4 +250,12 @@ def attach(rb, **kw) -> Scene:
             scene._update()
 
         hand.set = _set
+
+        # finger feedback: a real hand stops short of the commanded closure when something is between the fingers
+        def _closed_fraction(_hand=hand, _side=side):
+            target = float(np.mean(np.asarray(_hand.target)[2:]))
+            holding = (scene.hooked and _side == rb.cfg.task.door_hand) or (scene.can_held and _side == rb.cfg.task.can_hand)
+            return max(0.0, target - 0.2) if holding else target
+
+        hand.closed_fraction = _closed_fraction
     return scene

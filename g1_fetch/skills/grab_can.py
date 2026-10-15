@@ -16,7 +16,10 @@ def go_to_reach_pose(rb, door: DoorModel):
     """Stand `reach_standoff_m` in front of the cavity centre, squared to the fridge."""
     f = rb.cfg.fridge
     r = rb.cfg.loco.return_
-    x, y, yaw = door.standoff_pose_w(float(f.reach_standoff_m), lateral=float(f.reach_lateral_m))
+    # stand on the hinge-far side of the opening so the half-open panel is not in the body's way
+    side_shift = float(f.get("reach_side_shift_m", 0.25))
+    lateral = float(f.reach_lateral_m) + (side_shift if door.hinge_side == "right" else -side_shift)
+    x, y, yaw = door.standoff_pose_w(float(f.reach_standoff_m), lateral=lateral)
     rb.log.event("reach_pose", x=x, y=y, yaw=yaw)
     rb.loco.drive_to(x, y, yaw, 0.03, 0.04, float(r.k_pos), float(r.k_yaw), timeout=30.0, abort=rb.abort_requested)
 
@@ -53,10 +56,11 @@ def grab_can(rb, p_can: np.ndarray) -> None:
     cart_move(rb, side, hand_p, x_dir, palm, speed=0.06)
     hand.grasp()
     closed = hand.closed_fraction()
-    if closed is not None and closed > 0.97:
+    target = float(np.mean(np.array(rb.cfg.hand.grasp, dtype=float)[2:]))
+    if closed is not None and closed > target - float(rb.cfg.hand.get("grasp_margin", 0.08)):
         hand.open()
-        raise SkillFailed(f"grasp closed fully ({closed:.2f}); the can was missed")
-    rb.log.event("can_grasped", closed=closed)
+        raise SkillFailed(f"grasp closed to {closed:.2f} (commanded {target:.2f}); the can was missed")
+    rb.log.event("can_grasped", closed=closed, commanded=target)
     lifted = hand_p + np.array([0.0, 0.0, 0.03])
     cart_move(rb, side, lifted, x_dir, palm, speed=0.05, tol=0.03)
     out = lifted - x_dir * float(f.retract_m)

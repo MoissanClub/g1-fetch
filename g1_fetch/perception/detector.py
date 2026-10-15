@@ -112,11 +112,14 @@ class StubDetector:
 
     def __init__(self, script=None):
         self.script = script or []
+        self.script_image = None      # optional callable(color) -> detections (sim scenes with several cameras)
         self.calls = 0
         self.last_ms = 0.0
 
     def detect(self, color: np.ndarray) -> list[Detection]:
         self.calls += 1
+        if self.script_image is not None:
+            return list(self.script_image(color))
         if callable(self.script):
             return list(self.script(self.calls))
         return list(self.script)

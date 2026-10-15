@@ -8,7 +8,7 @@ import time
 import numpy as np
 
 from ..perception.localize import box_to_point
-from .common import SkillFailed, best, cart_move, go_home, observe, wait_user
+from .common import SkillFailed, bearing_of, best, cart_move, go_home, has_head, observe, wait_user
 from .search import search
 
 log = logging.getLogger(__name__)
@@ -22,13 +22,19 @@ def return_home(rb, home) -> None:
 
 
 def find_person(rb) -> None:
-    """Rotate until a person is seen, then close in to person_standoff_m."""
+    """Rotate until a person is seen, then close in to person_standoff_m.
+
+    Heading from the head camera when present (sees the whole person); distance from the RealSense when it sees
+    the person's legs, otherwise a constant cruise until it does.
+    """
     det, frame = search(rb, "person")
     standoff = float(rb.cfg.loco.person_standoff_m)
     period = 1.0 / float(rb.cfg.loco.rate_hz)
     a = rb.cfg.loco.approach
+    cruise = float(a.get("cruise_vx", 0.2))
     t0 = time.time()
     lost = 0
+    use_head = has_head(rb)
     try:
         while True:
             rb.check_abort()
@@ -36,7 +42,9 @@ def find_person(rb) -> None:
                 raise SkillFailed("person approach timeout")
             obs = observe(rb)
             person = best(obs.dets, "person")
-            if person is None:
+            head_obs = observe(rb, "head") if use_head else None
+            head_person = best(head_obs.dets, "person") if head_obs else None
+            if person is None and head_person is None:
                 lost += 1
                 if lost > 10:
                     raise SkillFailed("lost the person")
@@ -44,15 +52,14 @@ def find_person(rb) -> None:
                 time.sleep(period)
                 continue
             lost = 0
-            intr = obs.frame.intrinsics
-            yaw_err = -math.atan((person.center[0] - intr.cx) / intr.fx)
-            p = box_to_point(obs.frame, person, rb.frames, shrink=0.6)
-            dist = float(p[0]) if p is not None else standoff + 0.5
-            if abs(dist - standoff) < 0.1 and abs(yaw_err) < 0.08:
+            yaw_err = bearing_of(rb, head_person, head_obs.frame) if head_person is not None else bearing_of(rb, person, obs.frame)
+            p = box_to_point(obs.frame, person, rb.frames, shrink=0.6) if person is not None else None
+            dist = float(p[0]) if p is not None else None
+            if dist is not None and abs(dist - standoff) < 0.1 and abs(yaw_err) < 0.08:
                 rb.loco.stop()
                 rb.log.event("person_reached", dist=dist)
                 return
-            vx = max(-0.1, min(0.2, float(a.k_x) * (dist - standoff)))
+            vx = cruise if dist is None else max(-0.1, min(0.2, float(a.k_x) * (dist - standoff)))
             rb.loco.set_velocity(vx, 0.0, float(a.k_yaw) * yaw_err)
             time.sleep(period)
     finally:

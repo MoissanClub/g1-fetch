@@ -8,6 +8,7 @@ import time
 
 import numpy as np
 
+from ..frames import wrap_angle
 from .common import SkillFailed, cart_move, go_home, to_world, wait_user
 from .door import DoorModel
 
@@ -26,8 +27,16 @@ def face_edge(rb, door: DoorModel, side: str, standoff: float, lateral: float | 
         lateral = -0.10 if side == "right" else 0.10        # edge in front of the working shoulder
     q = p + standoff * outer + lateral * left
     rb.log.event("face_edge", x=float(q[0]), y=float(q[1]), yaw=yaw, theta_deg=math.degrees(th))
-    rb.loco.drive_to(float(q[0]), float(q[1]), yaw, 0.03, 0.04, float(r.k_pos), float(r.k_yaw), timeout=40.0,
-                     abort=rb.abort_requested)
+    try:
+        rb.loco.drive_to(float(q[0]), float(q[1]), yaw, 0.06, 0.08, float(r.k_pos), float(r.k_yaw), timeout=25.0,
+                         abort=rb.abort_requested)
+    except Exception as e:  # LocoError: accept a near miss, the arm moves are re-planned from the actual pose
+        pose = rb.loco.pose()
+        miss = math.hypot(pose.x - q[0], pose.y - q[1])
+        rb.log.event("face_edge_incomplete", miss=miss, reason=str(e))
+        if miss > 0.2:
+            raise SkillFailed(f"could not reach the door-edge pose ({e}); {miss:.2f} m away")
+        rb.loco.turn_by(wrap_angle(yaw - pose.yaw), timeout=10.0, abort=rb.abort_requested)
 
 
 def walk_with_door(rb, door: DoorModel, side: str, direction: float, stop_deg: float, max_dist: float,
@@ -46,6 +55,7 @@ def walk_with_door(rb, door: DoorModel, side: str, direction: float, stop_deg: f
     theta = door.theta
     stop = math.radians(stop_deg)
     moved = 0.0
+    err0 = arm.tracking_error(side)
     try:
         while True:
             rb.check_abort()
@@ -54,8 +64,8 @@ def walk_with_door(rb, door: DoorModel, side: str, direction: float, stop_deg: f
             hand_w = to_world(pose, rb.kin.fk(side, arm.measured(side))[:3, 3])
             theta = door.theta_from_point(hand_w, on_handle=on_handle)
             err = arm.tracking_error(side)
-            if err > float(f.pull_max_tracking_err):
-                log.warning("walk_with_door: tracking error %.2f rad, stopping", err)
+            if err - err0 > float(f.pull_max_tracking_err):
+                log.warning("walk_with_door: tracking error rose by %.2f rad, stopping", err - err0)
                 break
             if (direction < 0 and theta >= stop) or (direction > 0 and theta <= stop):
                 break
@@ -72,26 +82,58 @@ def walk_with_door(rb, door: DoorModel, side: str, direction: float, stop_deg: f
 
 
 def hook_edge_and_pull(rb, door: DoorModel, side: str, target_deg: float) -> float:
-    """Open wider: hook the free edge from the inner side, walk backward until target_deg."""
+    """Open wider: re-hook the handle at its current (swung) position from a stance that faces the panel, and walk
+    backward again. The handle is on the free edge, so this is the same hook as the first pull, just rotated."""
     f = rb.cfg.fridge
     hand = rb.hands[side]
-    face_edge(rb, door, side, float(f.edge_standoff_m), r_frac=1.0)
-    pose = rb.loco.pose()
+    # stand in front of the handle along the panel's current normal (outside the swing wedge)
+    r = rb.cfg.loco.return_
     th = door.theta
-    outer = door.normal_pelvis(pose, th)                 # toward the robot
-    x_dir = -outer
-    inward = door.edge_pelvis(pose, th, door.width - 0.04) - door.edge_pelvis(pose, th, door.width)
-    inward /= np.linalg.norm(inward) + 1e-9              # along the panel toward the hinge
-    hook_p = door.edge_pelvis(pose, th, door.width - 0.03) - 0.05 * outer   # 5 cm behind the panel, 3 cm in
-    palm = inward                                         # palm toward the hinge; fingers curl around the edge
-    pre = hook_p + 0.12 * outer
+    outer = door.door_normal_w(th)
+    hw = door.handle_w(th)
+    yaw = math.atan2(-outer[1], -outer[0])
+    left = np.array([-math.sin(yaw), math.cos(yaw), 0.0])
+    lateral = -float(rb.cfg.hand.get("hook_side_offset_m", 0.03)) if side == "right" else float(rb.cfg.hand.get("hook_side_offset_m", 0.03))
+    q = hw + float(rb.cfg.loco.approach.standoff_m) * outer + lateral * left
+    rb.log.event("face_handle", x=float(q[0]), y=float(q[1]), yaw=yaw, theta_deg=math.degrees(th))
+    try:
+        rb.loco.drive_to(float(q[0]), float(q[1]), yaw, 0.06, 0.08, float(r.k_pos), float(r.k_yaw), timeout=25.0, abort=rb.abort_requested)
+    except Exception as e:
+        pose = rb.loco.pose()
+        if math.hypot(pose.x - q[0], pose.y - q[1]) > 0.2:
+            raise SkillFailed(f"could not reach the second-pull pose ({e})")
+        rb.loco.turn_by(wrap_angle(yaw - pose.yaw), timeout=10.0, abort=rb.abort_requested)
+    pose = rb.loco.pose()
+    n = door.normal_pelvis(pose, th)
+    x_dir = -n
+    palm = np.array([0.0, 1.0, 0.0]) if side == "right" else np.array([0.0, -1.0, 0.0])
+    handle_p = door.handle_pelvis(pose, th)
+    reach = float(rb.cfg.hand.get("finger_reach_m", 0.08))
+    gap = float(f.handle_protrusion_m)
+    scoop = float(rb.cfg.hand.get("scoop_m", 0.05))
+    entry = handle_p + n * (reach - min(0.9 * gap, 0.035)) - palm * (float(rb.cfg.hand.get("hook_side_offset_m", 0.03)) + scoop)
+    pre = entry + n * float(f.pregrasp_offset_m)
+    target = float(np.mean(np.array(rb.cfg.hand.hook, dtype=float)[2:]))
+    margin = float(rb.cfg.hand.get("grasp_margin", 0.08))
     hand.open()
-    wait_user(rb, f"{side} hand behind the free edge {np.round(hook_p, 3)}")
+    wait_user(rb, f"{side} hand to the swung handle {np.round(entry, 3)}")
     cart_move(rb, side, pre, x_dir, palm, tol=0.04)
-    cart_move(rb, side, hook_p, x_dir, palm, tol=0.04, speed=0.06)
+    cart_move(rb, side, entry, x_dir, palm, tol=0.04, speed=0.06)
+    rb.arms.set_gain(side, float(rb.cfg.arm.kp_compliant))
+    try:
+        cart_move(rb, side, entry + palm * (scoop + 0.01), x_dir, palm, speed=0.04, tol=0.05, settle=False)
+        time.sleep(0.4)
+    finally:
+        rb.arms.set_gain(side, float(rb.cfg.arm.kp))
     hand.hook()
-    wait_user(rb, "walk backward holding the edge")
-    th = walk_with_door(rb, door, side, -1.0, target_deg, float(f.pull_back_m), float(f.pull_back_speed))
+    closed = hand.closed_fraction()
+    if closed is not None and closed > target - margin:
+        hand.open()
+        go_home(rb, side)
+        raise SkillFailed(f"second pull: hook closed to {closed:.2f}, nothing between the fingers")
+    rb.log.event("handle_grasped", closed=closed, commanded=target, second_pull=True)
+    wait_user(rb, "walk backward holding the handle again")
+    th = walk_with_door(rb, door, side, -1.0, target_deg, float(f.pull_back_m), float(f.pull_back_speed), on_handle=True)
     hand.open()
     p = rb.kin.fk(side, rb.arms.cmd[side])[:3, 3]
     pose = rb.loco.pose()

@@ -23,28 +23,49 @@ class SkillFailed(RuntimeError):
 class Observation:
     frame: Frame
     dets: list[Detection]
+    cam: str = "depth"
 
 
-def observe(rb) -> Observation:
-    frame = rb.camera.read()
+def has_head(rb) -> bool:
+    return getattr(rb, "head_cam", None) is not None
+
+
+def observe(rb, cam: str = "depth") -> Observation:
+    """One frame + detections from the RealSense ("depth") or the forward head camera ("head").
+    Asking for "head" when there is none falls back to the RealSense."""
+    if cam == "head" and has_head(rb):
+        frame = rb.head_cam.read()
+        cam_used = "head"
+    else:
+        frame = rb.camera.read()
+        cam_used = "depth"
     dets = rb.detector.detect(frame.color)
+    if cam_used == "head":
+        mc = float(rb.cfg.cameras.head.get("min_conf", 0.15))
+        dets = [d for d in dets if d.conf >= mc]
     rb.log.frame(frame, dets)
-    return Observation(frame, dets)
+    return Observation(frame, dets, cam_used)
 
 
-def look_for(rb, label: str, n_frames: int | None = None, max_frames: int = 12, min_conf: float = 0.0):
+def look_for(rb, label: str, n_frames: int | None = None, max_frames: int = 12, min_conf: float = 0.0, cam: str = "depth"):
     """Poll until `label` is seen in n consecutive frames. Returns (det, frame) or (None, last_frame)."""
     n = n_frames or int(rb.cfg.detector.stable_frames)
     stab = Stabilizer(label, n)
     last = None
     for _ in range(max_frames):
         rb.check_abort()
-        obs = observe(rb)
+        obs = observe(rb, cam)
         last = obs.frame
         det = stab.update([d for d in obs.dets if d.conf >= min_conf])
         if det is not None:
             return det, obs.frame
     return None, last
+
+
+def bearing_of(rb, det: Detection, frame: Frame) -> float:
+    """Body-frame yaw error (rad, +left) toward a detection in the given frame's camera."""
+    b = frame.intrinsics.bearing(det.center[0])
+    return rb.frames.head_bearing_to_body(b) if frame.source == "head" else b
 
 
 def best(dets: list[Detection], label: str) -> Detection | None:
@@ -127,28 +148,33 @@ def cart_move(rb, side: str, p_goal, x_dir, palm_dir=None, speed: float | None =
     return float(res_goal.pos_err)
 
 
-def ensure_reachable(rb, side: str, p_goal, x_dir, max_nudge: float = 0.12) -> np.ndarray:
-    """If p_goal (pelvis frame) is beyond reach, walk forward by the shortfall (once) and return the
-    goal re-expressed in the new pelvis frame. Raises SkillFailed if it is still unreachable."""
+def ensure_reachable(rb, side: str, p_goal, x_dir, max_nudge: float = 0.10, tries: int = 2) -> np.ndarray:
+    """If p_goal (pelvis frame) is beyond reach, walk forward by the shortfall (plus margin, up to `tries` times)
+    and return the goal re-expressed in the new pelvis frame. Raises SkillFailed if it is still unreachable."""
     p_goal = np.asarray(p_goal, dtype=float)
-    res = rb.kin.ik(side, p_goal, x_dir, q_seed=rb.arms.cmd[side], dir_weight=float(rb.cfg.arm.ik_dir_weight))
+    dir_w = float(rb.cfg.arm.ik_dir_weight)
+    res = rb.kin.ik(side, p_goal, x_dir, q_seed=rb.arms.cmd[side], dir_weight=dir_w)
     if res.ok:
         return p_goal
-    reached = rb.kin.fk(side, res.q)[:3, 3]
-    shortfall = float(p_goal[0] - reached[0]) + 0.02
-    if shortfall <= 0 or shortfall > max_nudge:
-        raise SkillFailed(f"{side} hand cannot reach {np.round(p_goal, 3)} (err {res.pos_err:.3f} m, shortfall {shortfall:.3f})")
-    pose = rb.loco.pose()
-    goal_w = to_world(pose, p_goal)
-    ahead = to_world(pose, [shortfall, 0.0, 0.0])
     r = rb.cfg.loco.return_
-    rb.log.event("nudge_forward", m=shortfall)
-    rb.loco.drive_to(ahead[0], ahead[1], None, 0.015, 0.05, float(r.k_pos), float(r.k_yaw), timeout=15.0, abort=rb.abort_requested)
-    p_new = to_pelvis(rb.loco.pose(), goal_w)
-    res = rb.kin.ik(side, p_new, x_dir, q_seed=rb.arms.cmd[side], dir_weight=float(rb.cfg.arm.ik_dir_weight))
-    if not res.ok:
-        raise SkillFailed(f"{side} hand still cannot reach {np.round(p_new, 3)} after nudging (err {res.pos_err:.3f} m)")
-    return p_new
+    goal_w = to_world(rb.loco.pose(), p_goal)
+    for attempt in range(tries):
+        reached = rb.kin.fk(side, res.q)[:3, 3]
+        shortfall = float(p_goal[0] - reached[0]) + 0.04        # margin: the controller stops a few cm short
+        if shortfall <= 0 or shortfall > max_nudge:
+            raise SkillFailed(f"{side} hand cannot reach {np.round(p_goal, 3)} (err {res.pos_err:.3f} m, shortfall {shortfall:.3f})")
+        pose = rb.loco.pose()
+        ahead = to_world(pose, [shortfall, 0.0, 0.0])
+        rb.log.event("nudge_forward", m=shortfall, attempt=attempt)
+        try:
+            rb.loco.drive_to(ahead[0], ahead[1], None, 0.03, 0.05, float(r.k_pos), float(r.k_yaw), timeout=10.0, abort=rb.abort_requested)
+        except Exception as e:  # LocoError: report as a skill failure so the phase logic handles it
+            raise SkillFailed(f"nudge forward failed: {e}")
+        p_goal = to_pelvis(rb.loco.pose(), goal_w)
+        res = rb.kin.ik(side, p_goal, x_dir, q_seed=rb.arms.cmd[side], dir_weight=dir_w)
+        if res.ok:
+            return p_goal
+    raise SkillFailed(f"{side} hand still cannot reach {np.round(p_goal, 3)} after nudging (err {res.pos_err:.3f} m)")
 
 
 def hand_position(rb, side: str) -> np.ndarray:

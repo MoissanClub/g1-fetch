@@ -186,3 +186,47 @@ def can_axis_from_box(frame: Frame, det: Detection, frames: Frames, cfg) -> np.n
     p = p.copy()
     p[0] += float(cfg.fridge.can_diameter_m) / 2
     return p
+
+
+def bar_from_depth(frame: Frame, plane: Plane, frames: Frames, cfg, box=None, step: int = 2) -> np.ndarray | None:
+    """Vertical bar handle as the set of depth points standing proud of the door plane.
+
+    Selects points 1.5–8 cm in front of the plane (toward the robot) between 0.5 m and 1.15 m above the floor,
+    bins them by y (1 cm); the densest bin whose points span >= 12 cm vertically is the bar. Returns the bar's
+    centre on the plane side (x on the bar face, y centre, z at the configured grasp height clamped to the visible
+    span) in the pelvis frame, or None.
+    """
+    f = cfg.fridge
+    h, w = frame.depth.shape
+    if box is None:
+        box = (0, 0, w - 1, h - 1)
+    pts = box_cloud(frame, box, frames, step=step, max_points=12000)
+    if pts.shape[0] < 200:
+        return None
+    dn = pts @ plane.n - plane.d                      # > 0 : toward the robot (in front of the door face)
+    floor_h = pts[:, 2] + frames.pelvis_height_m
+    sel = (dn > 0.015) & (dn < 0.08) & (floor_h > 0.5) & (floor_h < 1.15)
+    if sel.sum() < 40:
+        return None
+    P = pts[sel]
+    ys = P[:, 1]
+    bins = np.round(ys / 0.01).astype(int)
+    best_y, best_n, best_pts = None, 0, None
+    for b in np.unique(bins):
+        m = np.abs(bins - b) <= 1                     # 3 cm window
+        n = int(m.sum())
+        if n >= 40 and n > best_n:
+            span = float(P[m, 2].max() - P[m, 2].min())
+            if span >= 0.12:
+                best_y, best_n, best_pts = b * 0.01, n, P[m]
+    if best_pts is None:
+        return None
+    y_c = float(np.median(best_pts[:, 1]))
+    protrusion = float(np.median(dn[sel][np.abs(bins - int(round(best_y / 0.01))) <= 1]))
+    lo, hi = f.handle_height_band
+    z_lo, z_hi = float(best_pts[:, 2].min()), float(best_pts[:, 2].max())
+    z = frames.pelvis_z_from_floor(float(np.clip(float(f.handle_grasp_height_m), lo, hi)))
+    z = float(np.clip(z, z_lo + 0.03, max(z_lo + 0.03, z_hi - 0.03)))
+    p = plane.point_at(y_c, z)
+    p[0] -= protrusion
+    return np.array([p[0], y_c, z, protrusion, best_n])

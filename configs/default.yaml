@@ -20,6 +20,23 @@ camera:
   torso_T_link: {xyz: [0.0576235, 0.01753, 0.41987], rpy: [0.0, 0.850, 0.0]}   # URDF says 0.8308 (47.6 deg); floor-plane fit on PC2 gave 48.7 deg
   pelvis_T_torso: {xyz: [-0.0039635, 0.0, 0.054], rpy: [0.0, 0.0, 0.0]}
 
+cameras:
+  # Optional forward-looking RGB camera on the head (any UVC/V4L2 camera; nothing model-specific). It owns the
+  # fridge search, the far-approach bearing and the person search; the RealSense below keeps depth/manipulation.
+  head:
+    enabled: false
+    device: /dev/video6             # prefer the stable /dev/v4l/by-id/... path on the robot (configs/pc2.yaml)
+    width: 1280
+    height: 720
+    fps: 30
+    fourcc: YUYV                    # YUYV | MJPG (webcams)
+    hfov_deg: 68.0                  # horizontal FOV; used for bearings unless fx/fy/cx/cy are set from a calibration
+    flip: false
+    min_conf: 0.15                  # detection threshold for head-camera detections
+    mount:                          # camera link in the torso frame (x = optical axis); MEASURE
+      xyz: [0.02, 0.0, 0.52]        # ~0.10 m above the D435i, on top of the head
+      rpy: [0.0, 0.087, 0.0]        # ~5 deg down (user: roughly level, 0-10 deg down)
+
 detector:
   backend: yoloe                    # yoloe | coco | stub
   yoloe_model: models/yoloe-26s-seg-fridge.pt     # .engine after TensorRT export on PC2
@@ -54,14 +71,16 @@ loco:
   required_fsm_ids: [500, 501]
   search:
     yaw_rate: 0.40                  # continuous rotation; the detector runs on every frame
-    conf: 0.15                      # fridge is a thin strip at the top of the image beyond ~1.5 m (down-tilted camera)
+    conf: 0.15                      # low because the fridge can be a thin strip far away; near candidates are cross-checked by the D435i
+    near_box_frac: 0.5              # head-camera box covering more than this fraction of the frame needs the D435i to agree
     confirm_frames: 2               # stationary confirmation looks after a candidate
     settle_s: 0.5
     max_turns: 2                    # full rotations before giving up
     explore_step_m: 0               # walk forward this much and search again (0 = disabled; blind walk, keep off indoors)
     step_rad: 0.60                  # (legacy stop-and-look step, unused by the continuous search)
   approach:
-    standoff_m: 0.45                # pelvis-to-door-plane distance at the manipulation pose (MEASURE)
+    cruise_vx: 0.2                  # forward speed while only a bearing (no range) is known
+    standoff_m: 0.42                # pelvis-to-door-plane distance at the manipulation pose (MEASURE)
     # NOTE: arm reach is ~0.44 m from the shoulder (0.10 m lateral of the pelvis), so the handle must be
     # within ~0.40 m ahead of the pelvis; 0.38 puts the toes roughly 0.15-0.20 m from the door.
     slow_zone_m: 1.2
@@ -105,12 +124,21 @@ hand:
   grasp: [0.9, 0.7, 0.9, 0.9, 0.9, 0.9]
   hook: [0.2, 0.0, 0.9, 0.9, 0.9, 0.9]     # fingers curled, thumb aside, for a bar handle
   close_time_s: 0.8
+  finger_reach_m: 0.08             # open fingertips ahead of the palm centre (ee frame origin)
+  hook_side_offset_m: 0.03         # hand centre beside the plate so the fingers pass it before curling
+  scoop_m: 0.05                    # enter the gap this much further from the plate, then slide onto it before closing
+  grasp_margin: 0.08               # fingers must stop at least this far short of the commanded closure to count as a grasp
 
 fridge:
+  grip: bar                         # bar = vertical bar handle (hook sideways) | top_edge = hook fingers over the lower
+                                    # door's top lip in the seam between the doors (fridges without a bar handle)
+  seam_height_m: 1.20               # top_edge: prior height of the lower door's top edge (measured by the head camera if possible)
+  seam_height_band: [1.0, 1.4]
+  grip_from_edge_m: 0.08            # top_edge: grip this far from the free edge along the seam
   hinge_side: right                 # as seen by the robot facing the door (user: handle on the LEFT edge, door swings to the robot's right)
   door_width_m: 0.60                # prior; overridden by the measured plane extent when visible
-  handle_inset_m: 0.05              # free edge -> handle bar centre
-  handle_protrusion_m: 0.04         # bar centre ahead of the door plane
+  handle_inset_m: 0.03              # free edge -> handle bar centre (plate handle sits at the very edge)
+  handle_protrusion_m: 0.028        # plate face ahead of the door (finger gap behind it); measured from depth when seen
   handle_grasp_height_m: 0.95       # above floor; clamped to the reachable band. Shoulder is ~1.13 m above the floor
                                     # (measured stance); 0.2-0.3 m below the shoulder keeps the forearm forward.
   handle_height_band: [0.85, 1.05]  # reachable band for the hook grasp (MEASURE)
@@ -119,14 +147,15 @@ fridge:
   pregrasp_offset_m: 0.10
   # stage A: hook the handle and walk backward; the door follows the hand
   pull_back_m: 0.45                 # odometry distance to retreat while holding the handle
-  pull_back_speed: 0.08             # m/s
+  pull_back_speed: 0.12             # m/s (the controller ignores ~0.08 and below)
   pull_angle_deg: 60                # stop retreating once the door reaches this angle
   pull_max_tracking_err: 0.6        # rad; larger arm error means the hand lost the handle or is stuck
   # stage B: hook the free edge from behind and walk backward again to open wider (optional)
   stage_b_sweep: true
   open_angle_deg: 95                # stop retreating once the door reaches this angle
   edge_standoff_m: 0.30             # pelvis to the free edge when hooking/pushing it (MEASURE)
-  min_open_deg: 70                  # do not step into the cavity front unless the door is at least this open
+  min_open_deg: 60                  # do not step into the cavity front unless the door is at least this open
+  reach_side_shift_m: 0.25          # stand this far toward the hinge-far side of the opening when reaching in
   cavity_depth_jump_m: 0.30         # door considered open when the box median depth grows by this
   # reaching in
   reach_standoff_m: 0.30            # pelvis to the closed-door plane when reaching for the can (MEASURE; can at 0.42 m is the reach limit)
@@ -137,6 +166,14 @@ fridge:
   close_standoff_m: 0.90            # step back here (out of the swing) before hooking the free edge
   close_lateral_m: -0.15            # +left; negative keeps the body on the free-edge side
   handover_height_m: 1.00
+
+audio:
+  enabled: true                     # spoken status through the G1 speaker (Unitree TTS)
+  speak_logs: true                  # also speak WARNING/ERROR log lines and key events (rate limited, de-duplicated)
+  min_interval_s: 2.0
+  dedup_s: 10.0
+  speaker_id: 1                     # TtsMaker speaker id: 1 = English (user); 0 = Chinese
+  volume: 80                        # SetVolume at start
 
 task:
   disable_arm_service: true         # switch Unitree's g1_arm_example off before using rt/arm_sdk

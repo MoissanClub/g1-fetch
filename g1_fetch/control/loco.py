@@ -35,10 +35,9 @@ class LocoBase:
         vx = max(-c.max_vx, min(c.max_vx, vx))
         vy = max(-c.max_vy, min(c.max_vy, vy))
         yaw = max(-c.max_yaw, min(c.max_yaw, yaw))
-        if abs(vx) < c.deadband_v:
-            vx = 0.0
-        if abs(vy) < c.deadband_v:
-            vy = 0.0
+        # deadband on the planar speed, not per axis: a diagonal crawl must not be zeroed component-wise
+        if math.hypot(vx, vy) < c.deadband_v:
+            vx, vy = 0.0, 0.0
         if abs(yaw) < c.deadband_w:
             yaw = 0.0
         return VelCmd(vx, vy, yaw)

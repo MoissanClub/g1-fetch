@@ -53,9 +53,10 @@ class RunLog:
                 x1, y1, x2, y2 = (int(v) for v in d.box)
                 cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(img, f"{d.label} {d.conf:.2f}", (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            name = f"{self._n:06d}"
+            tag = "h" if getattr(frame, "source", "depth") == "head" else ""
+            name = f"{self._n:06d}{tag}"
             cv2.imwrite(str(self.dir / f"{name}.jpg"), img)
-            if force:
+            if force and frame.depth is not None:
                 np.save(self.dir / f"{name}_depth.npy", frame.depth)
         except Exception as e:  # logging must never break the task
             log.debug("frame log failed: %s", e)
@@ -82,7 +83,7 @@ def _jsonable(d):
 class Robot:
     cfg: Cfg
     frames: Frames
-    camera: object
+    camera: object                 # RealSense (RGB-D), always present
     detector: object
     verifier: object
     loco: object
@@ -91,7 +92,16 @@ class Robot:
     hands: dict
     log: RunLog
     dry_run: bool = False
+    head_cam: object = None        # forward RGB camera (V4L2) or None
+    speaker: object = None         # TTS (UnitreeSpeaker) or MockSpeaker
     _abort: threading.Event = field(default_factory=threading.Event)
+
+    def speak(self, text: str):
+        if self.speaker is not None:
+            try:
+                self.speaker.say(text)
+            except Exception as e:  # noqa: BLE001
+                log.debug("speak failed: %s", e)
 
     def abort_requested(self) -> bool:
         return self._abort.is_set()
@@ -118,7 +128,9 @@ class Robot:
                 log.warning("arm release failed: %s", e)
 
     def close(self):
-        for obj in (self.camera, self.arms, self.loco, *self.hands.values(), self.log):
+        for obj in (self.camera, self.head_cam, self.arms, self.loco, *self.hands.values(), self.log):
+            if obj is None:
+                continue
             try:
                 obj.close()
             except Exception as e:
@@ -131,6 +143,7 @@ def build_robot(cfg: Cfg, dry_run: bool = False, camera_source: str | None = Non
     import pinocchio  # noqa: F401  (before torch: libstdc++ ordering on the workstation)
 
     from .control.arm import ArmKinematics, MockArmStreamer
+    from .control.audio import attach_log_to_speech, build_speaker
     from .control.hand import MockHand
     from .control.loco import MockLoco
     from .perception.camera import FolderCamera, SyntheticCamera
@@ -146,6 +159,10 @@ def build_robot(cfg: Cfg, dry_run: bool = False, camera_source: str | None = Non
         det = detector if detector is not None else (build_detector(cfg) if camera_source else StubDetector())
         rb = Robot(cfg, frames, camera, det, build_verifier(cfg), MockLoco(cfg), MockArmStreamer(cfg), kin,
                    {"left": MockHand(cfg, "left"), "right": MockHand(cfg, "right")}, runlog, True)
+        if frames.has_head:
+            h = cfg.cameras.head
+            rb.head_cam = SyntheticCamera(Intrinsics.from_hfov(int(h.width), int(h.height), float(h.hfov_deg)), source="head")
+        rb.speaker = build_speaker(cfg, True)
         rb.arms.start()
         return rb
 
@@ -154,7 +171,7 @@ def build_robot(cfg: Cfg, dry_run: bool = False, camera_source: str | None = Non
     from .control.arm import UnitreeArmStreamer
     from .control.hand import UnitreeBraincoHand
     from .control.loco import UnitreeLoco
-    from .perception.camera import make_camera
+    from .perception.camera import make_camera, make_head_camera
 
     ChannelFactoryInitialize(0, str(cfg.network_interface))
     if bool(cfg.task.get("disable_arm_service", True)):
@@ -168,10 +185,15 @@ def build_robot(cfg: Cfg, dry_run: bool = False, camera_source: str | None = Non
     # pyrealsense2 has started fails with "cuTensor permutate execute failed" (CUDA stream-capture error).
     det = detector if detector is not None else build_detector(cfg)   # warms up (TensorRT) before the camera opens
     camera = make_camera(cfg, camera_source)
+    head_cam = make_head_camera(cfg)
     loco = UnitreeLoco(cfg)
     arms = UnitreeArmStreamer(cfg)
     hands = {"left": UnitreeBraincoHand(cfg, "left"), "right": UnitreeBraincoHand(cfg, "right")}
-    rb = Robot(cfg, frames, camera, det, build_verifier(cfg), loco, arms, kin, hands, runlog, False)
+    rb = Robot(cfg, frames, camera, det, build_verifier(cfg), loco, arms, kin, hands, runlog, False, head_cam)
+    rb.speaker = build_speaker(cfg, False)
+    attach_log_to_speech(rb.speaker, cfg)        # warnings, errors and key events are spoken too
+    if frames.has_head and head_cam is None:
+        rb.speak("Head camera unavailable")
     loco.start()
     arms.start()
     return rb

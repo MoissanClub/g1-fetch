@@ -5,6 +5,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from .control.loco import LocoError
 from .robot import Aborted, Robot
 from .skills import approach, close_door, grab_can, open_door, return_handover, search
 from .skills.common import SkillFailed, go_home, wait_user
@@ -60,6 +61,7 @@ class FetchDrinkTask:
     def _prepare(self):
         rb = self.rb
         rb.log.event("task_start", dry_run=rb.dry_run, cfg=rb.cfg.to_dict())
+        rb.speak("Run start")
         self.state.home = rb.loco.pose()
         rb.arms.enable()
         for side in ("left", "right"):
@@ -88,13 +90,17 @@ class FetchDrinkTask:
                     break
             ok = True
             rb.log.event("task_done")
+            rb.speak("Task complete")
         except Aborted:
             rb.log.event("task_aborted", phase=self.state.phase)
-        except SkillFailed as e:
+            rb.speak("Aborted")
+        except (SkillFailed, LocoError) as e:
             rb.log.event("task_failed", phase=self.state.phase, reason=str(e))
             log.error("task failed in %s: %s", self.state.phase, e)
+            rb.speak(f"Failed in {self.state.phase.replace('_', ' ')}")
         except KeyboardInterrupt:
             rb.log.event("task_interrupted", phase=self.state.phase)
+            rb.speak("Interrupted")
         finally:
             # hand the arms back to the built-in controller unless we are still holding the can
             rb.safe_stop(release_arms=not self.state.holding_can)
@@ -105,12 +111,13 @@ class FetchDrinkTask:
         for attempt in range(retries + 1):
             t0 = time.time()
             rb.log.event("phase_start", phase=name, attempt=attempt)
+            rb.speak(name.replace("_", " ") + ("" if attempt == 0 else " retry"))
             try:
                 fn()
                 rb.log.event("phase_done", phase=name, seconds=time.time() - t0)
                 self.state.history.append((name, attempt, "ok"))
                 return
-            except SkillFailed as e:
+            except (SkillFailed, LocoError) as e:
                 rb.loco.stop()
                 rb.log.event("phase_failed", phase=name, attempt=attempt, reason=str(e))
                 self.state.history.append((name, attempt, str(e)))

@@ -114,6 +114,21 @@ def cmd_check(args):
             ts.append((time.perf_counter() - t0) * 1e3)
         print(f"detector {np.median(ts):.1f} ms median, last dets: {[(d.label, round(d.conf, 2)) for d in dets]}")
         cam.close()
+        print("== head camera ==")
+        from .perception.camera import make_head_camera
+
+        head = make_head_camera(cfg)
+        if head is None:
+            print("disabled (cameras.head.enabled=false)")
+        else:
+            t0 = time.perf_counter()
+            seq0 = head.read().seq
+            time.sleep(2.0)
+            f = head.read()
+            fps = (f.seq - seq0) / (time.perf_counter() - t0)
+            dets = det.detect(f.color)
+            print(f"{cfg.cameras.head.device}: {f.color.shape} {fps:.1f} fps, intrinsics fx={f.intrinsics.fx:.0f}, dets {[(d.label, round(d.conf, 2)) for d in dets]}")
+            head.close()
     except Exception as e:
         print("CAMERA/DETECTOR PROBLEM:", e)
     return 0
@@ -121,16 +136,23 @@ def cmd_check(args):
 
 def cmd_capture(args):
     cfg = load_config(args.config, _overrides(args.set))
-    from .perception.camera import RealSenseCamera, save_frame
+    from .perception.camera import RealSenseCamera, make_head_camera, save_frame
 
     cam = RealSenseCamera(cfg)
+    head = make_head_camera(cfg)
     out = Path(args.out)
     for i in range(args.n):
         f = cam.read()
         save_frame(f, out, f"{i:04d}")
-        print("saved", i, "valid depth", f"{float((f.depth > 0).mean()):.0%}")
+        msg = f"saved {i} valid depth {float((f.depth > 0).mean()):.0%}"
+        if head is not None:
+            save_frame(head.read(), out / "head", f"{i:04d}")
+            msg += " + head frame"
+        print(msg)
         time.sleep(args.interval)
     cam.close()
+    if head is not None:
+        head.close()
     return 0
 
 
@@ -182,6 +204,9 @@ def cmd_loopbench(args):
             frame = rb.camera.read()
             t1 = time.perf_counter()
             dets = rb.detector.detect(frame.color)
+            if rb.head_cam is not None:
+                hf = rb.head_cam.read()
+                dets += [d for d in rb.detector.detect(hf.color)]
             t2 = time.perf_counter()
             rb.log.frame(frame, dets)
             t3 = time.perf_counter()
@@ -197,7 +222,7 @@ def cmd_loopbench(args):
                   f"plane {'none' if plane is None else f'{plane.distance_x:.2f}m'}", flush=True)
             time.sleep(0.1)
         m = np.median(np.array(rows), axis=0) * 1e3
-        print(f"MEDIAN ms: cam {m[0]:.0f} det {m[1]:.0f} log {m[2]:.0f} plane {m[3]:.0f} pose {m[4]:.0f} setvel {m[5]:.0f}")
+        print(f"MEDIAN ms: cam {m[0]:.0f} det {m[1]:.0f} (both cameras: {rb.head_cam is not None}) log {m[2]:.0f} plane {m[3]:.0f} pose {m[4]:.0f} setvel {m[5]:.0f}")
         print("arm tracking err:", rb.arms.tracking_error("left"), "fsm", rb.loco.fsm_id())
     finally:
         rb.safe_stop(release_arms=True)

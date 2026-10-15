@@ -93,6 +93,20 @@ class Intrinsics:
         fy = height / 2 / math.tan(math.radians(vfov_deg) / 2)
         return Intrinsics(fx, fy, width / 2, height / 2, width, height)
 
+    @staticmethod
+    def from_hfov(width: int, height: int, hfov_deg: float) -> "Intrinsics":
+        """Square pixels: fy = fx derived from the horizontal FOV."""
+        fx = width / 2 / math.tan(math.radians(hfov_deg) / 2)
+        return Intrinsics(fx, fx, width / 2, height / 2, width, height)
+
+    def bearing(self, u: float) -> float:
+        """Horizontal angle of a pixel column (rad, +left in the body sense: left of centre is positive)."""
+        return -math.atan((u - self.cx) / self.fx)
+
+    def elevation(self, v: float) -> float:
+        """Vertical angle of a pixel row (rad, +up)."""
+        return -math.atan((v - self.cy) / self.fy)
+
 
 @dataclass
 class Pose2D:
@@ -124,6 +138,17 @@ class Frames:
         # floor offset: camera height measured on the robot minus camera z in the pelvis frame
         self.pelvis_height_m = float(cfg.robot.camera_height_m) - float(self.camera_in_pelvis[2])
         self.camera_pitch_down = float(cam.torso_T_link.rpy[1])
+        # optional forward RGB camera on the head (cfg.cameras.head.mount, torso frame; x forward along its axis)
+        head = cfg.get("cameras")
+        head = None if head is None else head.get("head")
+        self.has_head = head is not None and bool(head.get("enabled", False))
+        if head is not None and head.get("mount") is not None:
+            self.T_torso_head = make_T(head.mount.xyz, head.mount.rpy)
+            self.T_pelvis_head_optical = self.T_pelvis_torso @ self.T_torso_head @ self.T_link_optical
+            self.T_head_optical_pelvis = inv_T(self.T_pelvis_head_optical)
+            self.head_in_pelvis = self.T_pelvis_head_optical[:3, 3].copy()
+            self.head_pitch_down = float(head.mount.rpy[1])
+            self.head_yaw = float(head.mount.rpy[2])
 
     def optical_to_pelvis(self, p):
         return apply_T(self.T_pelvis_optical, p)
@@ -136,6 +161,22 @@ class Frames:
 
     def pelvis_z_from_floor(self, h: float) -> float:
         return h - self.pelvis_height_m
+
+    def head_optical_to_pelvis(self, p):
+        return apply_T(self.T_pelvis_head_optical, p)
+
+    def head_ray_hit_plane_x(self, u: float, v: float, intr, x_plane: float) -> np.ndarray:
+        """Pelvis-frame point where the head-camera ray through pixel (u, v) meets the vertical plane x = x_plane."""
+        d_opt = np.array([(u - intr.cx) / intr.fx, (v - intr.cy) / intr.fy, 1.0])
+        R = self.T_pelvis_head_optical[:3, :3]
+        o = self.T_pelvis_head_optical[:3, 3]
+        d = R @ d_opt
+        t = (x_plane - o[0]) / d[0] if abs(d[0]) > 1e-6 else float("inf")
+        return o + t * d
+
+    def head_bearing_to_body(self, bearing: float) -> float:
+        """Head-camera horizontal bearing (rad) -> yaw error in the body frame (mount yaw added)."""
+        return bearing + self.head_yaw
 
     def view_ceiling(self, range_m: float, vfov_deg: float = 42.0) -> float:
         """Highest floor height visible at a given forward range from the camera (RGB by default)."""

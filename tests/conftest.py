@@ -10,9 +10,10 @@ FAST = {
              "return": {"k_pos": 1.2, "k_yaw": 2.5, "timeout_s": 40}},
     "arm": {"cart_speed": 1.0, "cart_step_s": 0.005, "weight_ramp_s": 0.1, "max_joint_vel": 20.0, "rate_hz": 200},
     "hand": {"close_time_s": 0.02},
-    "fridge": {"pull_back_speed": 0.4},
+    "fridge": {"pull_back_speed": 0.4, "min_open_deg": 40},   # the sim door physics only reach ~45 deg per pull
     "task": {"handover_timeout_s": 3.0, "max_retries": 0},
     "detector": {"backend": "stub", "stable_frames": 2},
+    "cameras": {"head": {"enabled": True, "width": 640, "height": 360, "hfov_deg": 68.0}},
 }
 
 

@@ -6,3 +6,21 @@ detector:
   device: 0                     # Orin GPU (CUDA 12.6 runtime + TensorRT 10.3 installed 2026-09-26)
   yoloe_model: models/yoloe-26s-seg-fridge.engine   # built by scripts/export_detector.py --engine
   coco_model: models/yolo26n.engine
+cameras:
+  head:
+    enabled: true
+    device: /dev/v4l/by-id/usb-Intel_R__RealSense_TM__Camera_SR300_Intel_R__RealSense_TM__Camera_SR300_617206003116-video-index0
+    width: 1280
+    height: 720
+    fps: 30
+    fourcc: YUYV                    # the SR300 colour node offers YUYV only; a webcam would use MJPG
+    hfov_deg: 68.0                  # SR300 colour spec (~68 x 41.5 deg at 16:9); calibrate to refine
+    mount:
+      xyz: [0.02, 0.0, 0.52]
+      rpy: [-0.26, 0.087, 0.0]      # roll -15 deg measured from level edges in run frames (2026-10-16); ~5 deg down
+fridge:
+  grip: bar                         # vertical bar on the left edge (user, 2026-10-16); located from depth at close range
+  door_width_m: 0.74                # home top-freezer fridge, standard ~28-30 in wide (photo); measure to refine
+loco:
+  approach:
+    standoff_m: 0.42                # top-edge grip at a 1.2-1.3 m seam needs <= 0.42 m (reach check 2026-10-16)

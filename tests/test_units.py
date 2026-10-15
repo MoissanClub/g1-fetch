@@ -6,7 +6,7 @@ import pytest
 from g1_fetch.frames import Frames, Intrinsics, Pose2D, wrap_angle
 from g1_fetch.perception.camera import Frame
 from g1_fetch.perception.detector import Detection, Stabilizer
-from g1_fetch.perception.localize import door_plane, fit_plane_ransac, handle_from_prior, median_depth
+from g1_fetch.perception.localize import bar_from_depth, door_plane, fit_plane_ransac, handle_from_prior, median_depth
 from g1_fetch.skills.door import DoorModel, door_from_plane
 
 
@@ -111,3 +111,28 @@ def test_door_model_right_hinge():
     assert np.allclose(d.along_w, [0, 1, 0])
     assert d.edge_w(math.pi / 2)[0] < 0.5 and d.edge_w(math.pi / 2)[1] == pytest.approx(-0.3)
     assert np.allclose(d.tangent_w(0.0), [-1, 0, 0])
+
+
+def test_bar_from_depth_finds_protruding_bar(cfg_default):
+    """A vertical bar 4 cm proud of the door, 20 cm left of centre, is found from depth alone."""
+    fr = Frames(cfg_default)
+    f = _plane_frame(fr, x_plane=0.45)
+    intr = f.intrinsics
+    # paint the bar: pixels whose ray hits x = 0.41 within |y - 0.20| < 0.012 and floor height 0.6..1.05
+    h, w = f.depth.shape
+    us, vs = np.meshgrid(np.arange(w), np.arange(h))
+    d_opt = intr.deproject(us, vs, np.ones((h, w)))
+    R = fr.T_pelvis_optical[:3, :3]
+    o = fr.T_pelvis_optical[:3, 3]
+    d = d_opt @ R.T
+    t = (0.41 - o[0]) / d[..., 0]
+    hit = o[None, None, :] + t[..., None] * d
+    on_bar = (t > 0) & (np.abs(hit[..., 1] - 0.20) < 0.012) & (hit[..., 2] + fr.pelvis_height_m > 0.6) \
+        & (hit[..., 2] + fr.pelvis_height_m < 1.05)
+    f.depth[on_bar] = (t * d_opt[..., 2])[on_bar].astype(np.float32)
+    plane = door_plane(f, (0, 0, w - 1, h - 1), fr)
+    assert plane is not None and abs(plane.distance_x - 0.45) < 0.02
+    bar = bar_from_depth(f, plane, fr, cfg_default)
+    assert bar is not None, "bar not found"
+    assert abs(bar[1] - 0.20) < 0.02 and abs(bar[0] - 0.41) < 0.02 and 0.02 < bar[3] < 0.06
+    assert 0.6 < fr.floor_height(bar[:3]) < 1.05
